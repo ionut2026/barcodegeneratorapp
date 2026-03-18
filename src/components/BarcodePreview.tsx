@@ -77,13 +77,13 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
     return QUALITY_LEVELS.find(q => q.value === config.quality)?.blur || 0;
   }, [config.quality]);
 
-  // Compute effective bar width: convert mils → pixels using DPI, then apply line thickness
+  // Compute effective bar width: convert mils → pixels using DPI, then apply line thickness.
+  // Result is rounded to the nearest whole pixel (min 1) so JsBarcode receives an integer width
+  // and all bar x-positions are integer multiples — eliminating sub-pixel drift/shadow artifacts.
   const effectiveWidth = useMemo(() => {
     const pixelWidth = config.widthMils * config.dpi / 1000;
-    if (effects.enableEffects) {
-      return pixelWidth * effects.lineThickness;
-    }
-    return pixelWidth;
+    const raw = effects.enableEffects ? pixelWidth * effects.lineThickness : pixelWidth;
+    return Math.max(1, Math.round(raw));
   }, [config.widthMils, config.dpi, effects.enableEffects, effects.lineThickness]);
 
   // Render 1D barcodes with JsBarcode

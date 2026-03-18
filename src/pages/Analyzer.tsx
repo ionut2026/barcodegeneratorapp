@@ -1,16 +1,13 @@
-import { useState, useCallback, useRef, KeyboardEvent, DragEvent } from 'react';
+import { useState, useCallback, useRef, DragEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { Header } from '@/components/Header';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { analyzeBarcode, AnalysisResult, FormatMatch, ChecksumStatus } from '@/lib/barcodeAnalyzer';
 import { scanBarcodeFromFile, ImageScanResult } from '@/lib/barcodeImageScanner';
 import {
   ArrowLeft,
-  Search,
   CheckCircle2,
   XCircle,
   MinusCircle,
@@ -19,7 +16,6 @@ import {
   AlertCircle,
   ImageUp,
   Loader2,
-  Type,
   RotateCcw,
 } from 'lucide-react';
 
@@ -116,8 +112,8 @@ function EmptyState() {
       </div>
       <h3 className="font-semibold text-base mb-2">Ready to Analyze</h3>
       <p className="text-sm text-muted-foreground max-w-sm leading-relaxed">
-        Type a barcode value in the <strong>Text</strong> tab, or upload a barcode image in the{' '}
-        <strong>Image Scan</strong> tab. Checksums are validated automatically.
+        Upload a barcode image above. The format will be detected and the checksum
+        validated automatically.
       </p>
     </div>
   );
@@ -125,7 +121,7 @@ function EmptyState() {
 
 interface NoMatchStateProps {
   input: string;
-  imageScanMeta?: { formatLabel: string } | null;
+  imageScanMeta: { formatLabel: string };
 }
 
 function NoMatchState({ input, imageScanMeta }: NoMatchStateProps) {
@@ -135,31 +131,21 @@ function NoMatchState({ input, imageScanMeta }: NoMatchStateProps) {
         <AlertCircle className="h-6 w-6 text-destructive" />
       </div>
       <h3 className="font-semibold text-base mb-2">No Format Matched</h3>
-      {imageScanMeta ? (
-        <p className="text-sm text-muted-foreground max-w-sm leading-relaxed">
-          The scanner identified a <strong>{imageScanMeta.formatLabel}</strong> barcode with
-          value{' '}
-          <span className="font-mono text-foreground bg-secondary/50 px-1.5 py-0.5 rounded">
-            {input}
-          </span>
-          , but this format is not supported for checksum analysis in this tool.
-        </p>
-      ) : (
-        <p className="text-sm text-muted-foreground max-w-sm leading-relaxed">
-          The value{' '}
-          <span className="font-mono text-foreground bg-secondary/50 px-1.5 py-0.5 rounded">
-            {input}
-          </span>{' '}
-          doesn't match any known barcode format. Check for invalid characters or incorrect length.
-        </p>
-      )}
+      <p className="text-sm text-muted-foreground max-w-sm leading-relaxed">
+        The scanner identified a <strong>{imageScanMeta.formatLabel}</strong> barcode with
+        value{' '}
+        <span className="font-mono text-foreground bg-secondary/50 px-1.5 py-0.5 rounded">
+          {input}
+        </span>
+        , but this format is not supported for checksum analysis in this tool.
+      </p>
     </div>
   );
 }
 
 interface ResultsListProps {
   result: AnalysisResult;
-  imageScanMeta?: { formatLabel: string } | null;
+  imageScanMeta: { formatLabel: string };
 }
 
 function ResultsList({ result, imageScanMeta }: ResultsListProps) {
@@ -175,12 +161,10 @@ function ResultsList({ result, imageScanMeta }: ResultsListProps) {
                 {result.input}
               </span>
             </p>
-            {imageScanMeta && (
-              <Badge variant="secondary" className="text-xs gap-1.5 shrink-0">
-                <ImageUp className="h-3 w-3" />
-                Image scan · {imageScanMeta.formatLabel} detected
-              </Badge>
-            )}
+            <Badge variant="secondary" className="text-xs gap-1.5 shrink-0">
+              <ImageUp className="h-3 w-3" />
+              Image scan · {imageScanMeta.formatLabel} detected
+            </Badge>
           </div>
         </div>
         <Badge variant="secondary" className="text-xs shrink-0">
@@ -211,9 +195,10 @@ type ScanState = 'idle' | 'scanning' | 'success' | 'error';
 
 interface ImageScannerProps {
   onDecoded: (result: ImageScanResult) => void;
+  onReset: () => void;
 }
 
-function ImageScanner({ onDecoded }: ImageScannerProps) {
+function ImageScanner({ onDecoded, onReset }: ImageScannerProps) {
   const [isDragOver, setIsDragOver]   = useState(false);
   const [previewUrl, setPreviewUrl]   = useState<string | null>(null);
   const [scanState, setScanState]     = useState<ScanState>('idle');
@@ -259,7 +244,8 @@ function ImageScanner({ onDecoded }: ImageScannerProps) {
     setPreviewUrl(prev => { if (prev) URL.revokeObjectURL(prev); return null; });
     setScanState('idle');
     setErrorMsg('');
-  }, []);
+    onReset();
+  }, [onReset]);
 
   // ── Drop zone (no image selected yet) ────────────────────────────────────
   if (!previewUrl) {
@@ -344,36 +330,17 @@ function ImageScanner({ onDecoded }: ImageScannerProps) {
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 const Analyzer = () => {
-  const [textValue, setTextValue]         = useState('');
   const [result, setResult]               = useState<AnalysisResult | null>(null);
   const [hasAnalyzed, setHasAnalyzed]     = useState(false);
   const [imageScanMeta, setImageScanMeta] = useState<{ formatLabel: string } | null>(null);
 
-  const runAnalysis = useCallback((value: string, meta?: { formatLabel: string }) => {
-    setResult(analyzeBarcode(value));
+  const handleImageDecoded = useCallback((scanResult: ImageScanResult) => {
+    setResult(analyzeBarcode(scanResult.decodedText));
     setHasAnalyzed(true);
-    setImageScanMeta(meta ?? null);
+    setImageScanMeta({ formatLabel: scanResult.formatLabel });
   }, []);
 
-  const handleTextAnalyze = useCallback(() => {
-    if (!textValue.trim()) return;
-    runAnalysis(textValue);
-  }, [textValue, runAnalysis]);
-
-  const handleKeyDown = useCallback(
-    (e: KeyboardEvent<HTMLInputElement>) => {
-      if (e.key === 'Enter') handleTextAnalyze();
-    },
-    [handleTextAnalyze],
-  );
-
-  const handleImageDecoded = useCallback((scanResult: ImageScanResult) => {
-    setTextValue(scanResult.decodedText);
-    runAnalysis(scanResult.decodedText, { formatLabel: scanResult.formatLabel });
-  }, [runAnalysis]);
-
   const handleClear = useCallback(() => {
-    setTextValue('');
     setResult(null);
     setHasAnalyzed(false);
     setImageScanMeta(null);
@@ -404,78 +371,21 @@ const Analyzer = () => {
             <h1 className="text-2xl font-bold tracking-tight">Barcode Analyzer</h1>
           </div>
           <p className="text-sm text-muted-foreground leading-relaxed">
-            Type a value or upload a barcode image — formats are detected and checksums
-            validated automatically.
+            Upload a barcode image — the format is detected and checksum validated automatically.
           </p>
         </div>
 
         {/* Input section */}
         <div className="glass-panel rounded-2xl shadow-xl p-6 mb-6">
-          <Tabs defaultValue="text">
-            <TabsList className="grid grid-cols-2 w-full mb-5 p-1 bg-secondary/60 rounded-xl h-auto gap-1">
-              <TabsTrigger
-                value="text"
-                className="gap-2 py-2.5 rounded-lg data-[state=active]:bg-card data-[state=active]:shadow data-[state=active]:text-primary transition-all"
-              >
-                <Type className="h-4 w-4" />
-                <span className="font-medium">Text Input</span>
-              </TabsTrigger>
-              <TabsTrigger
-                value="image"
-                className="gap-2 py-2.5 rounded-lg data-[state=active]:bg-card data-[state=active]:shadow data-[state=active]:text-primary transition-all"
-              >
-                <ImageUp className="h-4 w-4" />
-                <span className="font-medium">Image Scan</span>
-              </TabsTrigger>
-            </TabsList>
-
-            {/* Text tab */}
-            <TabsContent value="text" className="mt-0">
-              <label className="block text-sm font-medium mb-3 text-foreground/80">
-                Barcode Value
-              </label>
-              <div className="flex gap-3">
-                <Input
-                  value={textValue}
-                  onChange={(e) => setTextValue(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  placeholder="e.g. 5901234123457  ·  HELLO-123  ·  A12345B"
-                  className="flex-1 font-mono bg-secondary/50 border-border/60 focus-visible:ring-primary/50 h-11"
-                />
-                <Button
-                  onClick={handleTextAnalyze}
-                  disabled={!textValue.trim()}
-                  className="h-11 px-5 gap-2 font-medium"
-                >
-                  <Search className="h-4 w-4" />
-                  Analyze
-                </Button>
-                {hasAnalyzed && (
-                  <Button variant="outline" onClick={handleClear} className="h-11 px-4">
-                    Clear
-                  </Button>
-                )}
-              </div>
-              <p className="text-xs text-muted-foreground mt-2">
-                Press{' '}
-                <kbd className="px-1 py-0.5 rounded bg-secondary/60 font-mono text-xs">Enter</kbd>{' '}
-                to analyze · All formats and checksum types detected automatically
-              </p>
-            </TabsContent>
-
-            {/* Image tab */}
-            <TabsContent value="image" className="mt-0">
-              <p className="text-sm font-medium mb-3 text-foreground/80">Barcode Image</p>
-              <ImageScanner onDecoded={handleImageDecoded} />
-              <p className="text-xs text-muted-foreground mt-3">
-                Supports 1D and 2D barcodes · PNG, JPG, WebP, BMP, GIF
-              </p>
-            </TabsContent>
-          </Tabs>
+          <p className="text-sm font-medium mb-3 text-foreground/80">Barcode Image</p>
+          <ImageScanner onDecoded={handleImageDecoded} onReset={handleClear} />
+          <p className="text-xs text-muted-foreground mt-3">
+            Supports 1D and 2D barcodes · PNG, JPG, WebP, BMP, GIF
+          </p>
         </div>
 
         {/* Results area */}
-        {hasAnalyzed && result ? (
+        {hasAnalyzed && result && imageScanMeta ? (
           result.matches.length === 0 ? (
             <NoMatchState input={result.input} imageScanMeta={imageScanMeta} />
           ) : (

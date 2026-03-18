@@ -2,6 +2,7 @@
 // Fully isolated: no existing code depends on this module.
 
 import { BrowserMultiFormatReader, BarcodeFormat as ZXingFormat } from '@zxing/browser';
+import { DecodeHintType } from '@zxing/library';
 import type { BarcodeFormat } from './barcodeUtils';
 
 // Map ZXing numeric format IDs → our app's BarcodeFormat string literals
@@ -42,6 +43,27 @@ const ZXING_FORMAT_LABEL: Partial<Record<number, string>> = {
   [ZXingFormat.UPC_EAN_EXTENSION]: 'UPC/EAN Extension',
 };
 
+// Explicit hints ensure all desired formats are attempted, including Code39.
+// TRY_HARDER improves detection on low-contrast or complex images.
+const DECODE_HINTS: Map<DecodeHintType, unknown> = new Map([
+  [DecodeHintType.POSSIBLE_FORMATS, [
+    ZXingFormat.QR_CODE,
+    ZXingFormat.AZTEC,
+    ZXingFormat.DATA_MATRIX,
+    ZXingFormat.PDF_417,
+    ZXingFormat.CODE_128,
+    ZXingFormat.CODE_39,
+    ZXingFormat.CODE_93,
+    ZXingFormat.EAN_13,
+    ZXingFormat.EAN_8,
+    ZXingFormat.UPC_A,
+    ZXingFormat.UPC_E,
+    ZXingFormat.ITF,
+    ZXingFormat.CODABAR,
+  ]],
+  [DecodeHintType.TRY_HARDER, true],
+]);
+
 export interface ImageScanResult {
   /** The decoded barcode value as a string */
   decodedText: string;
@@ -58,7 +80,7 @@ export interface ImageScanResult {
 export async function scanBarcodeFromFile(file: File): Promise<ImageScanResult> {
   const objectUrl = URL.createObjectURL(file);
   try {
-    const reader = new BrowserMultiFormatReader();
+    const reader = new BrowserMultiFormatReader(DECODE_HINTS);
     const result = await reader.decodeFromImageUrl(objectUrl);
     const formatId = result.getBarcodeFormat() as number;
     return {
