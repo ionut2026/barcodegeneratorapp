@@ -168,6 +168,13 @@
       0 25px 50px -12px hsl(0 0% 0% / 0.25);
   }
 
+  @media print {
+    .barcode-platform {
+      box-shadow: none;
+      filter: none;
+    }
+  }
+
   .terminal-text {
     color: hsl(var(--terminal-text));
     text-shadow: none;

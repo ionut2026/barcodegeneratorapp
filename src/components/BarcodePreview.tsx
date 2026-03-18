@@ -16,6 +16,35 @@ interface BarcodePreviewProps {
 
 const defaultEffects = getDefaultEffectsConfig();
 
+/**
+ * Snap all bar rect coordinates and group translate values to integer pixels,
+ * and set shape-rendering="crispEdges" so the SVG renderer doesn't anti-alias
+ * bar edges. Applied to the live preview SVG and to fresh SVGs before export.
+ */
+function snapSvgToPixels(svg: SVGSVGElement): void {
+  svg.setAttribute('shape-rendering', 'crispEdges');
+
+  svg.querySelectorAll('rect').forEach(rect => {
+    ['x', 'y', 'width', 'height'].forEach(attr => {
+      const val = rect.getAttribute(attr);
+      if (val !== null) rect.setAttribute(attr, String(Math.round(parseFloat(val))));
+    });
+  });
+
+  svg.querySelectorAll('g[transform]').forEach(g => {
+    const t = g.getAttribute('transform');
+    if (t) {
+      g.setAttribute(
+        'transform',
+        t.replace(/translate\(([^)]+)\)/g, (_, args) => {
+          const nums = args.split(/[\s,]+/).map((n: string) => Math.round(parseFloat(n)));
+          return `translate(${nums.join(', ')})`;
+        }),
+      );
+    }
+  });
+}
+
 // Map our format names to bwip-js format names
 function getBwipFormat(format: string): string {
   const formatMap: Record<string, string> = {
@@ -77,6 +106,7 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
          margin: config.margin * config.scale,
         font: 'JetBrains Mono',
       });
+      snapSvgToPixels(svgRef.current);
       setRenderError(null);
     } catch (error) {
       console.error('Barcode render error:', error);
@@ -230,6 +260,7 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
         } else {
           canvas.width = img.width;
           canvas.height = img.height;
+          ctx.imageSmoothingEnabled = false;
           ctx.drawImage(img, 0, 0);
         }
 
@@ -237,7 +268,7 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
         link.download = `barcode-${config.format}-${barcodeText}.png`;
         link.href = canvas.toDataURL('image/png');
         link.click();
-        
+
         toast.success('Barcode downloaded successfully');
         URL.revokeObjectURL(url);
       };
@@ -287,6 +318,7 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
             } else {
               canvas.width = img.width;
               canvas.height = img.height;
+              ctx.imageSmoothingEnabled = false;
               ctx.drawImage(img, 0, 0);
             }
             URL.revokeObjectURL(url);
@@ -432,7 +464,7 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
       try {
         JsBarcode(tempSvg, renderText, {
           format: config.format,
-          width: pixelWidth * config.scale,
+          width: Math.round(pixelWidth * config.scale),
           height: config.height * config.scale,
           displayValue: config.displayValue,
           fontSize: config.fontSize * config.scale,
@@ -441,6 +473,7 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
           margin: 0,
           font: 'JetBrains Mono',
         });
+        snapSvgToPixels(tempSvg);
         const svgData = new XMLSerializer().serializeToString(tempSvg);
         const img = new Image();
         const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
@@ -448,6 +481,7 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
         img.onload = () => {
           canvas.width = img.width;
           canvas.height = img.height;
+          ctx.imageSmoothingEnabled = false;
           ctx.drawImage(img, 0, 0);
           URL.revokeObjectURL(url);
           dispatchPrint(canvas.toDataURL('image/png'));

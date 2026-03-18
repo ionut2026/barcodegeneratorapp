@@ -10,7 +10,9 @@
       "Bash(node_modules/.bin/vite build:*)",
       "Bash(npm install:*)",
       "Bash(node -e \"const p = require\\(''@zxing/browser/package.json''\\); console.log\\(''version:'', p.version\\); const l = require\\(''@zxing/library/package.json''\\); console.log\\(''library version:'', l.version\\);\")",
-      "Bash(node:*)"
+      "Bash(node:*)",
+      "Bash(node -e \":*)",
+      "Bash(find node_modules/jsbarcode/src -name *.js)"
     ]
   }
 }
