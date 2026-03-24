@@ -164,8 +164,14 @@ ipcMain.on('print-barcode', (event, imageDataUrl) => {
         </span>
       </div>
       <div class="preview-container">
-        <img src="${imageDataUrl}" alt="Barcode" />
+        <img id="barcode-img" alt="Barcode" />
       </div>
+      <script>
+        // Set image src via DOM API to prevent template-injection / XSS.
+        // The data URL is passed as a JSON-encoded string so special chars
+        // (quotes, angle brackets) cannot break out of the script context.
+        document.getElementById('barcode-img').src = ${JSON.stringify(imageDataUrl)};
+      </script>
     </body>
     </html>
   `;

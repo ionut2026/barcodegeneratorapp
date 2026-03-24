@@ -73,106 +73,87 @@ export interface BarcodeConfig {
   scale: number;
 }
 
-export function getApplicableChecksums(format: BarcodeFormat): { value: ChecksumType; label: string }[] {
-  const checksums: { value: ChecksumType; label: string }[] = [{ value: 'none', label: 'None' }];
-  
-  switch (format) {
-    case 'CODE39':
-      checksums.push({ value: 'mod43', label: 'Modulo 43' });
-      break;
-    case 'codabar':
-      checksums.push({ value: 'mod16', label: 'Modulo 16' });
-      checksums.push({ value: 'japanNW7', label: 'Japan NW-7' });
-      checksums.push({ value: 'jrc', label: 'JRC' });
-      checksums.push({ value: 'luhn', label: 'Luhn' });
-      checksums.push({ value: 'mod11PZN', label: 'Modulo 11 PZN' });
-      checksums.push({ value: 'mod11A', label: 'Modulo 11-A' });
-      checksums.push({ value: 'mod10Weight2', label: 'Modulo 10 Weight 2' });
-      checksums.push({ value: 'mod10Weight3', label: 'Modulo 10 Weight 3' });
-      checksums.push({ value: '7CheckDR', label: '7 Check DR' });
-      checksums.push({ value: 'mod16Japan', label: 'Modulo 16 Japan' });
-      break;
-    // EAN-13, EAN-8, UPC-A, UPC-E, Code 128 have intrinsic checksums
-    // handled automatically by the rendering library — no user option needed
-    case 'EAN13':
-    case 'EAN8':
-    case 'UPC':
-    case 'UPCE':
-    case 'CODE128':
-      return []; // No checksum options — built-in
-    case 'MSI10':
-    case 'MSI11':
-    case 'MSI1010':
-    case 'MSI1110':
-      return []; // Check digit is built into the format name — no additional options
-    case 'ITF':
-    case 'ITF14':
-      checksums.push({ value: 'mod10', label: 'Modulo 10 (auto-pads for even length)' });
-      break;
-    case 'MSI':
-      checksums.push({ value: 'mod10', label: 'Modulo 10' });
-      checksums.push({ value: 'mod11', label: 'Modulo 11' });
-      break;
-  }
-  
-  return checksums;
+// ── Checksum options registry ─────────────────────────────────────────────────
+// Maps each format to its available checksum options. `null` means intrinsic
+// checksum (no user choice); missing key falls back to [none].
+
+type ChecksumOption = { value: ChecksumType; label: string };
+
+const CHECKSUM_OPTIONS_REGISTRY: Partial<Record<BarcodeFormat, ChecksumOption[] | null>> = {
+  CODE39:  [{ value: 'none', label: 'None' }, { value: 'mod43', label: 'Modulo 43' }],
+  codabar: [
+    { value: 'none', label: 'None' },
+    { value: 'mod16', label: 'Modulo 16' },
+    { value: 'japanNW7', label: 'Japan NW-7' },
+    { value: 'jrc', label: 'JRC' },
+    { value: 'luhn', label: 'Luhn' },
+    { value: 'mod11PZN', label: 'Modulo 11 PZN' },
+    { value: 'mod11A', label: 'Modulo 11-A' },
+    { value: 'mod10Weight2', label: 'Modulo 10 Weight 2' },
+    { value: 'mod10Weight3', label: 'Modulo 10 Weight 3' },
+    { value: '7CheckDR', label: '7 Check DR' },
+    { value: 'mod16Japan', label: 'Modulo 16 Japan' },
+  ],
+  ITF:     [{ value: 'none', label: 'None' }, { value: 'mod10', label: 'Modulo 10 (auto-pads for even length)' }],
+  MSI:     [{ value: 'none', label: 'None' }, { value: 'mod10', label: 'Modulo 10' }, { value: 'mod11', label: 'Modulo 11' }],
+  // Intrinsic checksums — no user options
+  EAN13:   null,
+  EAN8:    null,
+  UPC:     null,
+  UPCE:    null,
+  CODE128: null,
+  MSI10:   null,
+  MSI11:   null,
+  MSI1010: null,
+  MSI1110: null,
+  ITF14:   null,
+};
+
+export function getApplicableChecksums(format: BarcodeFormat): ChecksumOption[] {
+  const entry = CHECKSUM_OPTIONS_REGISTRY[format];
+  if (entry === null) return [];               // intrinsic checksum — no user choice
+  if (entry !== undefined) return entry;        // format-specific options
+  return [{ value: 'none', label: 'None' }];   // default for formats with no checksum
 }
+
+// ── Checksum application registry ─────────────────────────────────────────────
+// Maps each ChecksumType to a function that appends the check character(s).
+
+type ChecksumApplier = (text: string, format: BarcodeFormat) => string;
+
+const CHECKSUM_APPLIER_REGISTRY: Record<string, ChecksumApplier> = {
+  mod10: (text, format) => {
+    const checkDigit = calculateMod10(text);
+    let result = text + checkDigit;
+    // ITF requires even number of digits — pad with leading zero if needed
+    if ((format === 'ITF' || format === 'ITF14') && result.length % 2 !== 0) {
+      result = '0' + result;
+    }
+    return result;
+  },
+  mod11: (text) => {
+    const check = calculateMod11(text);
+    return text + (check === 10 ? 'X' : check);
+  },
+  mod43:        (text) => text + calculateMod43Checksum(text),
+  mod16:        (text) => text + calculateMod16Checksum(text),
+  japanNW7:     (text) => text + calculateJapanNW7Checksum(text),
+  jrc:          (text) => text + calculateJRCChecksum(text),
+  luhn:         (text) => text + calculateLuhnChecksum(text),
+  mod11PZN:     (text) => text + calculateMod11PZNChecksum(text),
+  mod11A:       (text) => text + calculateMod11AChecksum(text),
+  mod10Weight2: (text) => text + calculateMod10Weight2Checksum(text),
+  mod10Weight3: (text) => text + calculateMod10Weight3Checksum(text),
+  '7CheckDR':   (text) => text + calculate7CheckDRChecksum(text),
+  mod16Japan:   (text) => text + calculateMod16JapanChecksum(text),
+  ean13:        (text) => text.length === 12 ? text + calculateEAN13Checksum(text) : text,
+  upc:          (text) => text.length === 11 ? text + calculateUPCChecksum(text) : text,
+};
 
 export function applyChecksum(text: string, format: BarcodeFormat, checksumType: ChecksumType): string {
   if (checksumType === 'none' || !text.trim()) return text;
-  
-  // For ITF barcodes, we need to ensure even length after adding checksum
-  const isITF = format === 'ITF' || format === 'ITF14';
-  
-  switch (checksumType) {
-    case 'mod10': {
-      const checkDigit = calculateMod10(text);
-      let result = text + checkDigit;
-      // ITF requires even number of digits - pad with leading zero if needed
-      if (isITF && result.length % 2 !== 0) {
-        result = '0' + result;
-      }
-      return result;
-    }
-    case 'mod11': {
-      const check = calculateMod11(text);
-      return text + (check === 10 ? 'X' : check);
-    }
-    case 'mod43':
-      return text + calculateMod43Checksum(text);
-    case 'mod16':
-      return text + calculateMod16Checksum(text);
-    case 'japanNW7':
-      return text + calculateJapanNW7Checksum(text);
-    case 'jrc':
-      return text + calculateJRCChecksum(text);
-    case 'luhn':
-      return text + calculateLuhnChecksum(text);
-    case 'mod11PZN':
-      return text + calculateMod11PZNChecksum(text);
-    case 'mod11A':
-      return text + calculateMod11AChecksum(text);
-    case 'mod10Weight2':
-      return text + calculateMod10Weight2Checksum(text);
-    case 'mod10Weight3':
-      return text + calculateMod10Weight3Checksum(text);
-    case '7CheckDR':
-      return text + calculate7CheckDRChecksum(text);
-    case 'mod16Japan':
-      return text + calculateMod16JapanChecksum(text);
-    case 'ean13':
-      if (text.length === 12) {
-        return text + calculateEAN13Checksum(text);
-      }
-      return text;
-    case 'upc':
-      if (text.length === 11) {
-        return text + calculateUPCChecksum(text);
-      }
-      return text;
-    default:
-      return text;
-  }
+  const applier = CHECKSUM_APPLIER_REGISTRY[checksumType];
+  return applier ? applier(text, format) : text;
 }
 
 export const BARCODE_FORMATS: { value: BarcodeFormat; label: string; description: string; validChars: string; lengthHint: string; category: '1D' | '2D' }[] = [
@@ -580,124 +561,74 @@ export function calculateUPCChecksum(input: string): number {
   return (10 - (total % 10)) % 10;
 }
 
+// ── Normalization registry ────────────────────────────────────────────────────
+// Strip check digits so JsBarcode recalculates them. Each entry is a
+// [regex, sliceEnd] pair: if the input matches the regex, return text.slice(0, sliceEnd).
+
+const NORMALIZE_REGISTRY: Partial<Record<BarcodeFormat, [RegExp, number]>> = {
+  EAN13: [/^\d{13}$/, 12],   // JsBarcode EAN13 expects 12 digits
+  EAN8:  [/^\d{8}$/,  7],    // JsBarcode EAN8 expects 7 digits
+  UPC:   [/^\d{12}$/, 11],   // JsBarcode UPC expects 11 digits
+  UPCE:  [/^\d{8}$/,  7],    // JsBarcode UPC-E expects 6 or 7 digits; 8 = includes check digit
+  ITF14: [/^\d{14}$/, 13],   // JsBarcode ITF14 expects 13 digits
+};
+
 // Normalize input for JsBarcode: strip check digits so JsBarcode recalculates them
 export function normalizeForRendering(text: string, format: BarcodeFormat): string {
-  switch (format) {
-    case 'EAN13':
-      // JsBarcode EAN13 expects 12 digits (calculates check digit itself)
-      if (/^\d{13}$/.test(text)) return text.slice(0, 12);
-      return text;
-    case 'EAN8':
-      // JsBarcode EAN8 expects 7 digits
-      if (/^\d{8}$/.test(text)) return text.slice(0, 7);
-      return text;
-    case 'UPC':
-      // JsBarcode UPC expects 11 digits
-      if (/^\d{12}$/.test(text)) return text.slice(0, 11);
-      return text;
-    case 'UPCE':
-      // JsBarcode UPC-E expects 6 or 7 digits; 8 = includes check digit
-      if (/^\d{8}$/.test(text)) return text.slice(0, 7);
-      return text;
-    case 'ITF14':
-      // JsBarcode ITF14 expects 13 digits
-      if (/^\d{14}$/.test(text)) return text.slice(0, 13);
-      return text;
-    default:
-      return text;
-  }
+  const rule = NORMALIZE_REGISTRY[format];
+  if (rule && rule[0].test(text)) return text.slice(0, rule[1]);
+  return text;
 }
 
-export function validateInput(text: string, format: BarcodeFormat): { valid: boolean; message: string } {
+// ── Input validation registry ─────────────────────────────────────────────────
+// Each entry is a validator function that returns an error result or null (valid).
+
+type ValidationResult = { valid: boolean; message: string };
+type FormatValidator = (text: string) => ValidationResult | null;
+
+const digitsOnly = (label: string): FormatValidator => (text) =>
+  /^\d+$/.test(text) ? null : { valid: false, message: `${label} only supports digits (0-9)` };
+
+const VALIDATION_REGISTRY: Partial<Record<BarcodeFormat, FormatValidator>> = {
+  CODE39: (text) =>
+    /^[A-Z0-9\-\.\s\$\/\+\%]+$/.test(text) ? null : { valid: false, message: 'CODE 39 only supports A-Z (uppercase), 0-9, -, ., $, /, +, %, and space' },
+  EAN13: (text) =>
+    digitsOnly('EAN-13')(text) ?? (text.length !== 12 && text.length !== 13 ? { valid: false, message: 'EAN-13 requires exactly 12 or 13 digits' } : null),
+  EAN8: (text) =>
+    digitsOnly('EAN-8')(text) ?? (text.length !== 7 && text.length !== 8 ? { valid: false, message: 'EAN-8 requires exactly 7 or 8 digits' } : null),
+  EAN5: (text) =>
+    /^\d{5}$/.test(text) ? null : { valid: false, message: 'EAN-5 requires exactly 5 digits' },
+  EAN2: (text) =>
+    /^\d{2}$/.test(text) ? null : { valid: false, message: 'EAN-2 requires exactly 2 digits' },
+  UPC: (text) =>
+    digitsOnly('UPC-A')(text) ?? (text.length !== 11 && text.length !== 12 ? { valid: false, message: 'UPC-A requires exactly 11 or 12 digits' } : null),
+  UPCE: (text) =>
+    digitsOnly('UPC-E')(text) ?? (text.length < 6 || text.length > 8 ? { valid: false, message: 'UPC-E requires 6, 7, or 8 digits' } : null),
+  ITF14: (text) =>
+    digitsOnly('ITF-14')(text) ?? (text.length !== 13 && text.length !== 14 ? { valid: false, message: 'ITF-14 requires exactly 13 or 14 digits' } : null),
+  ITF: (text) =>
+    !/^\d+$/.test(text) || text.length % 2 !== 0 ? { valid: false, message: 'ITF requires an even number of digits' } : null,
+  pharmacode: (text) => {
+    const num = parseInt(text, 10);
+    return isNaN(num) || num < 3 || num > 131070 ? { valid: false, message: 'Pharmacode requires a number between 3 and 131070' } : null;
+  },
+  MSI:     (text) => digitsOnly('MSI formats')(text),
+  MSI10:   (text) => digitsOnly('MSI formats')(text),
+  MSI11:   (text) => digitsOnly('MSI formats')(text),
+  MSI1010: (text) => digitsOnly('MSI formats')(text),
+  MSI1110: (text) => digitsOnly('MSI formats')(text),
+  // CODE93, qrcode, azteccode, datamatrix, pdf417, CODE128: no special validation
+};
+
+export function validateInput(text: string, format: BarcodeFormat): ValidationResult {
   if (!text.trim()) {
     return { valid: false, message: 'Please enter a value' };
   }
-
-  switch (format) {
-    case 'CODE39':
-      if (!/^[A-Z0-9\-\.\s\$\/\+\%]+$/i.test(text)) {
-        return { valid: false, message: 'CODE 39 only supports A-Z, 0-9, -, ., $, /, +, %, and space' };
-      }
-      break;
-    case 'CODE93':
-      break;
-    case 'EAN13':
-      if (!/^\d+$/.test(text)) {
-        return { valid: false, message: 'EAN-13 only supports digits (0-9)' };
-      }
-      if (text.length !== 12 && text.length !== 13) {
-        return { valid: false, message: 'EAN-13 requires exactly 12 or 13 digits' };
-      }
-      break;
-    case 'EAN8':
-      if (!/^\d+$/.test(text)) {
-        return { valid: false, message: 'EAN-8 only supports digits (0-9)' };
-      }
-      if (text.length !== 7 && text.length !== 8) {
-        return { valid: false, message: 'EAN-8 requires exactly 7 or 8 digits' };
-      }
-      break;
-    case 'EAN5':
-      if (!/^\d{5}$/.test(text)) {
-        return { valid: false, message: 'EAN-5 requires exactly 5 digits' };
-      }
-      break;
-    case 'EAN2':
-      if (!/^\d{2}$/.test(text)) {
-        return { valid: false, message: 'EAN-2 requires exactly 2 digits' };
-      }
-      break;
-    case 'UPC':
-      if (!/^\d+$/.test(text)) {
-        return { valid: false, message: 'UPC-A only supports digits (0-9)' };
-      }
-      if (text.length !== 11 && text.length !== 12) {
-        return { valid: false, message: 'UPC-A requires exactly 11 or 12 digits' };
-      }
-      break;
-    case 'UPCE':
-      if (!/^\d+$/.test(text)) {
-        return { valid: false, message: 'UPC-E only supports digits (0-9)' };
-      }
-      if (text.length < 6 || text.length > 8) {
-        return { valid: false, message: 'UPC-E requires 6, 7, or 8 digits' };
-      }
-      break;
-    case 'ITF14':
-      if (!/^\d+$/.test(text)) {
-        return { valid: false, message: 'ITF-14 only supports digits (0-9)' };
-      }
-      if (text.length !== 13 && text.length !== 14) {
-        return { valid: false, message: 'ITF-14 requires exactly 13 or 14 digits' };
-      }
-      break;
-    case 'ITF':
-      if (!/^\d+$/.test(text) || text.length % 2 !== 0) {
-        return { valid: false, message: 'ITF requires an even number of digits' };
-      }
-      break;
-    case 'pharmacode':
-      const num = parseInt(text, 10);
-      if (isNaN(num) || num < 3 || num > 131070) {
-        return { valid: false, message: 'Pharmacode requires a number between 3 and 131070' };
-      }
-      break;
-    case 'MSI':
-    case 'MSI10':
-    case 'MSI11':
-    case 'MSI1010':
-    case 'MSI1110':
-      if (!/^\d+$/.test(text)) {
-        return { valid: false, message: 'MSI formats only support digits' };
-      }
-      break;
-    case 'qrcode':
-    case 'azteccode':
-    case 'datamatrix':
-    case 'pdf417':
-      break;
+  const validator = VALIDATION_REGISTRY[format];
+  if (validator) {
+    const result = validator(text);
+    if (result) return result;
   }
-
   return { valid: true, message: '' };
 }
 

@@ -173,9 +173,20 @@ describe('validateInput', () => {
       expect(validateInput('@BC', 'CODE39').valid).toBe(false);
     });
 
-    it('accepts "hello" (CODE39 regex is case-insensitive)', () => {
-      // The regex uses /i flag so lowercase is accepted by validateInput
-      expect(validateInput('hello', 'CODE39').valid).toBe(true);
+    it('rejects "hello" (CODE39 only allows uppercase letters)', () => {
+      // Regression: the regex previously used the /i flag, silently accepting
+      // lowercase. JsBarcode would uppercase them, causing a ZXing round-trip
+      // bit-perfect mismatch ("hello" expected vs "HELLO" decoded).
+      expect(validateInput('hello', 'CODE39').valid).toBe(false);
+    });
+
+    it('rejects mixed-case "BARCODE123d"', () => {
+      expect(validateInput('BARCODE123d', 'CODE39').valid).toBe(false);
+    });
+
+    it('error message mentions uppercase requirement', () => {
+      const result = validateInput('hello', 'CODE39');
+      expect(result.message).toMatch(/uppercase/i);
     });
   });
 
@@ -573,6 +584,13 @@ describe('getApplicableChecksums', () => {
     const r = getApplicableChecksums('ITF');
     expect(r[0].value).toBe('none');
     expect(r.some(c => c.value === 'mod10')).toBe(true);
+  });
+  it('returns [] for ITF14 — intrinsic GS1 check digit, no user option', () => {
+    // Regression: ITF14 previously shared the ITF case and offered mod10.
+    // The Luhn Mod10 algorithm is DIFFERENT from GS1 Mod10 (weights 3,1 vs Luhn
+    // doubling). Offering it caused a ValidationException when certifying because
+    // the Luhn check digit conflicted with the ITF14 intrinsic GS1 check.
+    expect(getApplicableChecksums('ITF14')).toEqual([]);
   });
   it('returns [none] for qrcode', () => {
     expect(getApplicableChecksums('qrcode')[0].value).toBe('none');

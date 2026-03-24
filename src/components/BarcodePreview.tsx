@@ -2,9 +2,12 @@ import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import JsBarcode from 'jsbarcode';
 import bwipjs from 'bwip-js';
 import { BarcodeConfig, applyChecksum, is2DBarcode, QUALITY_LEVELS, normalizeForRendering } from '@/lib/barcodeUtils';
+import { ValidationService, ValidationCertificate } from '@/lib/validationService';
 import { ImageEffectsConfig, getDefaultEffectsConfig } from '@/components/ImageEffects';
- import { Download, Copy, Check, AlertCircle, Printer } from 'lucide-react';
+ import { Download, Copy, Check, AlertCircle, Printer, ShieldCheck, FileJson, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Switch } from '@/components/ui/switch';
+import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
 
 interface BarcodePreviewProps {
@@ -63,6 +66,11 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
   const [copied, setCopied] = useState(false);
   const [renderError, setRenderError] = useState<string | null>(null);
   const [barcodeDataUrl, setBarcodeDataUrl] = useState<string | null>(null);
+  const [certificate, setCertificate] = useState<ValidationCertificate | null>(null);
+  const [isCertifying, setIsCertifying] = useState(false);
+  const [certEnabled, setCertEnabled] = useState(false);
+  const certifyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const certifyGenerationRef = useRef(0);
 
   const is2D = is2DBarcode(config.format);
 
@@ -149,6 +157,31 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
       setBarcodeDataUrl(null);
     }
    }, [config, isValid, barcodeText, effectiveWidth, is2D, config.scale]);
+
+  // Auto-certify: run ValidationService.certify() 600 ms after the last config change.
+  // Only runs when the user has enabled the Validation Certificate toggle.
+  useEffect(() => {
+    if (!certEnabled || !isValid || !config.text.trim()) {
+      setCertificate(null);
+      setIsCertifying(false);
+      if (certifyTimerRef.current) clearTimeout(certifyTimerRef.current);
+      return;
+    }
+    if (certifyTimerRef.current) clearTimeout(certifyTimerRef.current);
+    const generation = ++certifyGenerationRef.current;
+    setIsCertifying(true);
+    certifyTimerRef.current = setTimeout(async () => {
+      const svc = new ValidationService();
+      const cert = await svc.certify(config);
+      // Only apply result if this is still the latest generation — a newer
+      // config change would have incremented the counter, making this stale.
+      if (certifyGenerationRef.current === generation) {
+        setCertificate(cert);
+        setIsCertifying(false);
+      }
+    }, 600);
+    return () => { if (certifyTimerRef.current) clearTimeout(certifyTimerRef.current); };
+  }, [config, isValid, certEnabled]);
 
   const applyEffects = useCallback((ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, img: HTMLImageElement) => {
     const scaledWidth = Math.round(img.width * effects.scale);
@@ -278,6 +311,19 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
 
       img.src = url;
     }
+  };
+
+  const downloadCertificate = () => {
+    if (!certificate) return;
+    const json = JSON.stringify(certificate, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.download = `cert-${config.format}-${Date.now()}.json`;
+    link.href = url;
+    link.click();
+    URL.revokeObjectURL(url);
+    toast.success('Certificate downloaded');
   };
 
   const copyToClipboard = async () => {
@@ -608,6 +654,89 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
           </div>
         )}
       </div>
+
+      <div className="mt-4 flex items-center gap-2">
+        <Switch
+          id="cert-toggle"
+          checked={certEnabled}
+          onCheckedChange={setCertEnabled}
+        />
+        <Label htmlFor="cert-toggle" className="text-sm text-muted-foreground cursor-pointer select-none">
+          Validation Certificate
+        </Label>
+      </div>
+
+      {certEnabled && isCertifying && isValid && config.text.trim() && (
+        <div className="mt-3 p-4 rounded-xl border border-border/50 bg-card/50 flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Certifying barcode…
+        </div>
+      )}
+
+      {certEnabled && certificate && !isCertifying && (() => {
+        const gradeColor: Record<string, string> = {
+          A: 'bg-green-500/20 text-green-400 border-green-500/30',
+          B: 'bg-green-500/20 text-green-400 border-green-500/30',
+          C: 'bg-amber-500/20 text-amber-400 border-amber-500/30',
+          D: 'bg-amber-500/20 text-amber-400 border-amber-500/30',
+          F: 'bg-red-500/20 text-red-400 border-red-500/30',
+        };
+        const g = certificate.isoGrade;
+        return (
+          <div className="mt-3 p-4 rounded-xl border border-border/50 bg-card/50 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <ShieldCheck className="h-4 w-4 text-muted-foreground" />
+                Validation Certificate
+              </div>
+              <div className="flex items-center gap-2">
+                <span className={`text-sm font-bold px-3 py-0.5 rounded-lg border ${gradeColor[g]}`}>
+                  ISO Grade {g}
+                </span>
+                <button
+                  onClick={downloadCertificate}
+                  className="flex items-center gap-1.5 text-sm font-bold px-3 py-0.5 rounded-lg border bg-secondary/20 text-muted-foreground border-border/50 hover:text-foreground hover:border-border transition-colors"
+                >
+                  <FileJson className="h-3.5 w-3.5" />
+                  JSON
+                </button>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs font-mono">
+              <span className="text-muted-foreground">Symbology</span>
+              <span>{certificate.symbologyDetected}</span>
+              <span className="text-muted-foreground">Validation</span>
+              {certificate.scanVerification === 'not_supported' ? (
+                <span className="text-amber-400" title={certificate.scanVerificationNote ?? ''}>
+                  Not supported ⓘ
+                </span>
+              ) : (
+                <span className={certificate.scanVerification === 'pass' ? 'text-green-400' : 'text-red-400'}>
+                  {certificate.scanVerification === 'pass' ? 'Pass' : 'Fail'}
+                </span>
+              )}
+              <span className="text-muted-foreground">Checksum</span>
+              <span>{certificate.checksumCalculationStatus.status}</span>
+              <span className="text-muted-foreground">X-Dimension</span>
+              <span className={certificate.xDimensionCompliant ? 'text-green-400' : 'text-amber-400'}>
+                {certificate.xDimensionMils} mils {certificate.xDimensionCompliant ? '≥ 7.5 ✓' : '< 7.5 ⚠'}
+              </span>
+              <span className="text-muted-foreground">Timestamp</span>
+              <span className="text-muted-foreground">{new Date(certificate.timestamp).toLocaleTimeString()}</span>
+            </div>
+            {certificate.scanVerification === 'not_supported' && certificate.scanVerificationNote && (
+              <div className="text-xs text-amber-400/80 border-t border-border/50 pt-2 leading-relaxed">
+                ⓘ {certificate.scanVerificationNote}
+              </div>
+            )}
+            {certificate.errors.length > 0 && (
+              <div className="text-xs text-red-400 font-mono border-t border-border/50 pt-2">
+                {certificate.errors.join(' · ')}
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {checksumInfo && (
         <div className="mt-4 p-4 bg-primary/10 rounded-xl border border-primary/20">

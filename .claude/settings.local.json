@@ -16,7 +16,11 @@
       "Bash(node_modules/.bin/vitest --version)",
       "Bash(node_modules/.bin/vitest run:*)",
       "Bash(npm test:*)",
-      "Bash(xargs wc:*)"
+      "Bash(xargs wc:*)",
+      "Bash(grep:*)",
+      "Bash(npx vitest:*)",
+      "Bash(wc -l D:/projects/barcodegeneratorapp/src/lib/*.ts D:/projects/barcodegeneratorapp/src/lib/*.tsx)",
+      "Bash(wc -l D:/projects/barcodegeneratorapp/src/components/*.tsx D:/projects/barcodegeneratorapp/src/components/*.ts)"
     ]
   }
 }

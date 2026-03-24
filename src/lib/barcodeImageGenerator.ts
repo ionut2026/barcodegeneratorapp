@@ -46,12 +46,19 @@ async function render1DToCanvas(
     img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgData)));
   });
 
-  return {
+  const result: BarcodeImageResult = {
     dataUrl: canvas.toDataURL('image/png'),
     width: canvas.width,
     height: canvas.height,
     value,
   };
+
+  // Release intermediate canvas/image memory — prevents accumulation in batch mode.
+  canvas.width = 0;
+  canvas.height = 0;
+  img.src = '';
+
+  return result;
 }
 
 function render2DToCanvas(
@@ -71,12 +78,18 @@ function render2DToCanvas(
     includetext: false,
   };
   bwipjs.toCanvas(canvas, bwipOptions as Parameters<typeof bwipjs.toCanvas>[1]);
-  return {
+  const result: BarcodeImageResult = {
     dataUrl: canvas.toDataURL('image/png'),
     width: canvas.width,
     height: canvas.height,
     value,
   };
+
+  // Release canvas memory after extracting data URL.
+  canvas.width = 0;
+  canvas.height = 0;
+
+  return result;
 }
 
 export async function generateBarcodeImage(
@@ -118,9 +131,21 @@ export async function generateBarcodeBlob(
       canvas.height = img.height;
       ctx.imageSmoothingEnabled = false;
       ctx.drawImage(img, 0, 0);
-      canvas.toBlob(resolve, 'image/png');
+      canvas.toBlob((blob) => {
+        // Release canvas memory — critical for batch mode to avoid accumulating
+        // detached DOM nodes and GPU-backed pixel buffers.
+        canvas.width = 0;
+        canvas.height = 0;
+        img.src = '';
+        resolve(blob);
+      }, 'image/png');
     };
-    img.onerror = reject;
+    img.onerror = (e) => {
+      img.src = '';
+      canvas.width = 0;
+      canvas.height = 0;
+      reject(e);
+    };
     img.src = result.dataUrl;
   });
 }
