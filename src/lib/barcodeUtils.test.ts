@@ -635,3 +635,36 @@ describe('applyChecksum ITF even-length padding', () => {
     expect(result.length % 2).toBe(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// applyChecksum mod11 check=10 edge case (produces 'X' for numeric-only fmts)
+// ---------------------------------------------------------------------------
+describe('applyChecksum mod11 check=10 handling', () => {
+  it('MSI + mod11: returns text unchanged when check digit would be X', () => {
+    // calculateMod11("6"): 6*2=12, 12%11=1, 11-1=10 → check=10
+    const result = applyChecksum('6', 'MSI', 'mod11');
+    expect(result).toBe('6');
+    expect(result).not.toContain('X');
+  });
+  it('MSI + mod11: appends digit normally when check < 10', () => {
+    // calculateMod11("12345"): check=5
+    const result = applyChecksum('12345', 'MSI', 'mod11');
+    expect(result).toBe('123455');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// applyChecksum mod11A check=10 edge case (produces 'X' for codabar)
+// ---------------------------------------------------------------------------
+describe('applyChecksum mod11A check=10 handling', () => {
+  it('codabar + mod11A: returns text unchanged when check digit would be X', () => {
+    // calculateMod11AChecksum("6"): reversed [6], 6*2=12, 12%11=1, 11-1=10 → 'X'
+    const result = applyChecksum('6', 'codabar', 'mod11A');
+    expect(result).toBe('6');
+    expect(result).not.toContain('X');
+  });
+  it('codabar + mod11A: appends digit normally when check is not X', () => {
+    const result = applyChecksum('12345', 'codabar', 'mod11A');
+    expect(result).toBe('123455');
+  });
+});

@@ -161,6 +161,8 @@ export function BatchGenerator({ onImagesGenerated, onActionsReady }: BatchGener
         return;
       }
 
+      const skipped = valueList.length - images.length;
+
       const batch: CommittedBatch = {
         id: `batch-${++batchIdCounter}`,
         format,
@@ -174,7 +176,11 @@ export function BatchGenerator({ onImagesGenerated, onActionsReady }: BatchGener
       setBatches(prev => [...prev, batch]);
       setValues('');
       const label = chkLabel ? `${fmtLabel} + ${chkLabel}` : fmtLabel;
-      toast.success(`Added ${images.length} ${label} barcodes to batch`);
+      if (skipped > 0) {
+        toast.warning(`Added ${images.length} ${label} barcodes (${skipped} skipped — invalid after checksum)`);
+      } else {
+        toast.success(`Added ${images.length} ${label} barcodes to batch`);
+      }
     } catch (error) {
       console.error('Add to batch error:', error);
       toast.error('Failed to generate barcodes');

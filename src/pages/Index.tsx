@@ -7,7 +7,7 @@ import { ChecksumPreview } from '@/components/ChecksumPreview';
 import { ImageEffects, ImageEffectsConfig, getDefaultEffectsConfig } from '@/components/ImageEffects';
 import { BatchGenerator, BatchActions } from '@/components/BatchGenerator';
 import { BatchPreview } from '@/components/BatchPreview';
-import { BarcodeConfig, getDefaultConfig, validateInput } from '@/lib/barcodeUtils';
+import { BarcodeConfig, getDefaultConfig, validateInput, applyChecksum } from '@/lib/barcodeUtils';
 import { BarcodeImageResult } from '@/lib/barcodeImageGenerator';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Settings2, Calculator, Sparkles, Layers } from 'lucide-react';
@@ -21,7 +21,22 @@ const Index = () => {
   const [checksumInput, setChecksumInput] = useState('');
   const [checksumVariants, setChecksumVariants] = useState<{ name: string; fullValue: string; applicable: boolean }[]>([]);
   const batchActionsRef = useRef<BatchActions | null>(null);
-  const validation = validateInput(config.text, config.format);
+  // Validate the post-checksum text, not the raw input.
+  // When a checksum is active it can fix issues (e.g. ITF odd→even digits)
+  // or introduce new ones (e.g. MSI + mod11 producing 'X').
+  const barcodeText = applyChecksum(config.text, config.format, config.checksumType);
+  const validation = (() => {
+    if (!config.text.trim()) return { valid: false, message: 'Please enter a value' };
+    const postResult = validateInput(barcodeText, config.format);
+    if (postResult.valid) return postResult;
+    // Post-checksum value is invalid — decide which error to show
+    const rawResult = validateInput(config.text, config.format);
+    if (rawResult.valid) {
+      // Raw input is valid but the checksum made it invalid
+      return { valid: false, message: 'Selected checksum produces an invalid character for this format' };
+    }
+    return rawResult;
+  })();
 
   const handleChecksumData = useCallback((input: string, checksums: { name: string; fullValue: string; applicable: boolean }[]) => {
     setChecksumInput(input);
@@ -131,7 +146,7 @@ const Index = () => {
                   />
                 </TabsContent>
 
-                <TabsContent value="batch" className="mt-0">
+                <TabsContent value="batch" className="mt-0 data-[state=inactive]:hidden" forceMount>
                   <BatchGenerator
                     onImagesGenerated={setBatchImages}
                     onActionsReady={(actions) => { batchActionsRef.current = actions; }}

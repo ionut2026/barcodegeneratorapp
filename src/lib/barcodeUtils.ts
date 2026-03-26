@@ -131,9 +131,15 @@ const CHECKSUM_APPLIER_REGISTRY: Record<string, ChecksumApplier> = {
     }
     return result;
   },
-  mod11: (text) => {
+  mod11: (text, format) => {
     const check = calculateMod11(text);
-    return text + (check === 10 ? 'X' : check);
+    if (check === 10) {
+      // Check digit 10 maps to 'X' — invalid for numeric-only formats (MSI).
+      // Return text unchanged so validation catches the incompatibility.
+      const numericOnly = ['MSI', 'MSI10', 'MSI11', 'MSI1010', 'MSI1110', 'ITF', 'ITF14'].includes(format);
+      return numericOnly ? text : text + 'X';
+    }
+    return text + check;
   },
   mod43:        (text) => text + calculateMod43Checksum(text),
   mod16:        (text) => text + calculateMod16Checksum(text),
@@ -141,7 +147,11 @@ const CHECKSUM_APPLIER_REGISTRY: Record<string, ChecksumApplier> = {
   jrc:          (text) => text + calculateJRCChecksum(text),
   luhn:         (text) => text + calculateLuhnChecksum(text),
   mod11PZN:     (text) => text + calculateMod11PZNChecksum(text),
-  mod11A:       (text) => text + calculateMod11AChecksum(text),
+  mod11A:       (text) => {
+    const result = calculateMod11AChecksum(text);
+    // 'X' is not a valid character for codabar — skip checksum for these values
+    return result === 'X' ? text : text + result;
+  },
   mod10Weight2: (text) => text + calculateMod10Weight2Checksum(text),
   mod10Weight3: (text) => text + calculateMod10Weight3Checksum(text),
   '7CheckDR':   (text) => text + calculate7CheckDRChecksum(text),
