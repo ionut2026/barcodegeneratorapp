@@ -443,8 +443,11 @@ describe('is2DBarcode', () => {
 // getDefaultConfig
 // ---------------------------------------------------------------------------
 describe('getDefaultConfig', () => {
-  it('widthMils === 7.5', () => {
-    expect(getDefaultConfig().widthMils).toBe(7.5);
+  it('widthMils is snapped to pixel grid at 300 DPI (2 px = 6.67 mil)', () => {
+    const cfg = getDefaultConfig();
+    expect(cfg.widthMils).toBe(6.67);
+    // Verify it maps to exactly 2 pixels at 300 DPI — no fractional bar widths
+    expect(Math.round(cfg.widthMils * cfg.dpi / 1000)).toBe(2);
   });
 
   it('dpi === 300', () => {

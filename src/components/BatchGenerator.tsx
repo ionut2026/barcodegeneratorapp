@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { BarcodeFormat, BARCODE_FORMATS, validateInput } from '@/lib/barcodeUtils';
+import { BarcodeFormat, BARCODE_FORMATS, ChecksumType, getApplicableChecksums, applyChecksum, snapToPixelGrid, getDefaultConfig } from '@/lib/barcodeUtils';
 import { generateBarcodeImage, generateBarcodeBlob, BarcodeImageResult } from '@/lib/barcodeImageGenerator';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -8,14 +8,22 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Slider } from '@/components/ui/slider';
 import { Progress } from '@/components/ui/progress';
-import { Shuffle, Maximize2 } from 'lucide-react';
+import { Shuffle, Maximize2, Plus, Trash2, Package } from 'lucide-react';
 import { toast } from 'sonner';
 
-const SCALE_PRESETS = [
-  { label: 'Small', value: 0.5 },
-  { label: 'Medium', value: 1 },
-  { label: 'Large', value: 2 },
-];
+const DEFAULTS = getDefaultConfig();
+
+interface CommittedBatch {
+  id: string;
+  format: BarcodeFormat;
+  checksumType: ChecksumType;
+  formatLabel: string;
+  checksumLabel: string;
+  values: string[];
+  images: BarcodeImageResult[];
+}
+
+let batchIdCounter = 0;
 
 export interface BatchActions {
   downloadAsZip: () => Promise<void>;
@@ -27,92 +35,167 @@ export interface BatchActions {
 interface BatchGeneratorProps {
   onImagesGenerated?: (images: BarcodeImageResult[]) => void;
   onActionsReady?: (actions: BatchActions) => void;
-  /** X-dimension in mils from the main Generate config (default 7.5). */
-  widthMils?: number;
-  /** Target print DPI from the main Generate config (default 300). */
-  dpi?: number;
 }
 
-export function BatchGenerator({ onImagesGenerated, onActionsReady, widthMils = 7.5, dpi = 300 }: BatchGeneratorProps) {
+const SCALE_PRESETS = [
+  { label: 'S', value: 0.5 },
+  { label: 'M', value: 1 },
+  { label: 'L', value: 2 },
+];
+
+function getFormatLabel(format: BarcodeFormat): string {
+  return BARCODE_FORMATS.find(f => f.value === format)?.label ?? format;
+}
+
+function getChecksumLabel(format: BarcodeFormat, checksumType: ChecksumType): string {
+  if (checksumType === 'none') return '';
+  const checksums = getApplicableChecksums(format);
+  return checksums.find(c => c.value === checksumType)?.label ?? checksumType;
+}
+
+function generateRandomString(length: number, numeric: boolean): string {
+  const chars = numeric ? '0123456789' : '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+  let result = '';
+  for (let i = 0; i < length; i++) {
+    result += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return result;
+}
+
+function generateRandomForFormat(format: BarcodeFormat, count: number, stringLength: number): string[] {
+  const isNumericOnly = ['EAN13', 'EAN8', 'UPC', 'ITF14', 'ITF', 'CODE128C', 'MSI', 'MSI10', 'MSI11', 'pharmacode', 'codabar'].includes(format);
+
+  let length = stringLength;
+  if (format === 'EAN13') length = 12;
+  if (format === 'EAN8') length = 7;
+  if (format === 'UPC') length = 11;
+  if (format === 'ITF14') length = 13;
+  if (format === 'ITF' && length % 2 !== 0) length = Math.max(2, length - 1);
+
+  if (format === 'pharmacode') {
+    return Array.from({ length: count }, () => String(Math.floor(Math.random() * 131068) + 3));
+  }
+
+  if (format === 'codabar') {
+    const dataChars = '0123456789-$:/.+';
+    return Array.from({ length: count }, () => {
+      let val = '';
+      for (let i = 0; i < length; i++) {
+        val += dataChars.charAt(Math.floor(Math.random() * dataChars.length));
+      }
+      return val;
+    });
+  }
+
+  return Array.from({ length: count }, () => generateRandomString(length, isNumericOnly));
+}
+
+const formats1D = BARCODE_FORMATS.filter(f => f.category === '1D');
+const formats2D = BARCODE_FORMATS.filter(f => f.category === '2D');
+
+export function BatchGenerator({ onImagesGenerated, onActionsReady }: BatchGeneratorProps) {
+  // Current config (working area)
   const [format, setFormat] = useState<BarcodeFormat>('CODE39');
+  const [checksumType, setChecksumType] = useState<ChecksumType>('none');
   const [values, setValues] = useState('');
   const [count, setCount] = useState(10);
   const [stringLength, setStringLength] = useState(8);
+
+  // Committed batches (persistent)
+  const [batches, setBatches] = useState<CommittedBatch[]>([]);
+
+  // Shared output settings
+  const [widthMils, setWidthMils] = useState(DEFAULTS.widthMils);
+  const [dpi, setDpi] = useState(DEFAULTS.dpi);
+  const [height, setHeight] = useState(DEFAULTS.height);
+  const [margin, setMargin] = useState(DEFAULTS.margin);
   const [scale, setScale] = useState(1);
+
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isAdding, setIsAdding] = useState(false);
   const [progress, setProgress] = useState(0);
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
 
-  // Auto-preview: generate images whenever values, format, or scale change
+  const applicableChecksums = getApplicableChecksums(format);
+
+  useEffect(() => { setChecksumType('none'); }, [format]);
+
+  // Notify parent whenever committed batches change
   useEffect(() => {
-    const valueList = values.split('\n').map(v => v.trim()).filter(v => v);
-    if (valueList.length === 0) {
-      onImagesGenerated?.([]);
-      return;
-    }
-
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-
-    debounceRef.current = setTimeout(async () => {
-      try {
-        const images: BarcodeImageResult[] = [];
-        for (const val of valueList) {
-          const result = await generateBarcodeImage(val, format, scale, 10, widthMils, dpi);
-          if (result) images.push(result);
-        }
-        onImagesGenerated?.(images);
-      } catch (error) {
-        console.error('Auto-preview error:', error);
-      }
-    }, 300);
-
-    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
-  }, [values, format, scale, widthMils, dpi, onImagesGenerated]);
-
-  const generateRandomString = (length: number, numeric: boolean = false): string => {
-    const chars = numeric
-      ? '0123456789'
-      : '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-    let result = '';
-    for (let i = 0; i < length; i++) {
-      result += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-    return result;
-  };
+    const allImages = batches.flatMap(b => b.images);
+    onImagesGenerated?.(allImages);
+  }, [batches, onImagesGenerated]);
 
   const generateRandomValues = () => {
-    const isNumericOnly = ['EAN13', 'EAN8', 'UPC', 'ITF14', 'ITF', 'CODE128C', 'MSI', 'MSI10', 'MSI11', 'pharmacode'].includes(format);
-
-    let length = stringLength;
-    if (format === 'EAN13') length = 12;
-    if (format === 'EAN8') length = 7;
-    if (format === 'UPC') length = 11;
-    if (format === 'ITF14') length = 13;
-    if (format === 'ITF' && length % 2 !== 0) length = Math.max(2, length - 1);
-
-    if (format === 'pharmacode') {
-      const pharmacodeValues: string[] = [];
-      for (let i = 0; i < count; i++) {
-        pharmacodeValues.push(String(Math.floor(Math.random() * 131068) + 3));
-      }
-      setValues(pharmacodeValues.join('\n'));
-      toast.success(`Generated ${count} random values`);
-      return;
-    }
-
-    const randomValues: string[] = [];
-    for (let i = 0; i < count; i++) {
-      randomValues.push(generateRandomString(length, isNumericOnly));
-    }
-    setValues(randomValues.join('\n'));
+    const vals = generateRandomForFormat(format, count, stringLength);
+    setValues(vals.join('\n'));
     toast.success(`Generated ${count} random values`);
   };
 
-  const getValueList = () => values.split('\n').map(v => v.trim()).filter(v => v);
-
-  const downloadAsZip = useCallback(async () => {
+  const addToBatch = async () => {
     const valueList = values.split('\n').map(v => v.trim()).filter(v => v);
-    if (valueList.length === 0) { toast.error('Please enter at least one value'); return; }
+    if (valueList.length === 0) {
+      toast.error('Enter or generate values first');
+      return;
+    }
+
+    setIsAdding(true);
+    try {
+      const images: BarcodeImageResult[] = [];
+      const fmtLabel = getFormatLabel(format);
+      const chkLabel = getChecksumLabel(format, checksumType);
+
+      for (const val of valueList) {
+        const processed = applyChecksum(val, format, checksumType);
+        const result = await generateBarcodeImage(processed, format, scale, margin, widthMils, dpi, height);
+        if (result) {
+          images.push({
+            ...result,
+            formatLabel: fmtLabel,
+            checksumLabel: chkLabel,
+          });
+        }
+      }
+
+      if (images.length === 0) {
+        toast.error('No valid barcodes could be generated');
+        return;
+      }
+
+      const batch: CommittedBatch = {
+        id: `batch-${++batchIdCounter}`,
+        format,
+        checksumType,
+        formatLabel: fmtLabel,
+        checksumLabel: chkLabel,
+        values: valueList,
+        images,
+      };
+
+      setBatches(prev => [...prev, batch]);
+      setValues('');
+      const label = chkLabel ? `${fmtLabel} + ${chkLabel}` : fmtLabel;
+      toast.success(`Added ${images.length} ${label} barcodes to batch`);
+    } catch (error) {
+      console.error('Add to batch error:', error);
+      toast.error('Failed to generate barcodes');
+    } finally {
+      setIsAdding(false);
+    }
+  };
+
+  const removeBatch = (id: string) => {
+    setBatches(prev => prev.filter(b => b.id !== id));
+    toast.success('Batch removed');
+  };
+
+  const clearAllBatches = () => {
+    setBatches([]);
+    toast.success('All batches cleared');
+  };
+
+  // ZIP / PDF exports operate on committed batches
+  const downloadAsZip = useCallback(async () => {
+    if (batches.length === 0) { toast.error('No batches to export'); return; }
 
     setIsGenerating(true);
     setProgress(0);
@@ -120,60 +203,80 @@ export function BatchGenerator({ onImagesGenerated, onActionsReady, widthMils = 
     try {
       const JSZip = (await import('jszip')).default;
       const zip = new JSZip();
-      const folder = zip.folder('barcodes');
+      const multiFormat = batches.length > 1;
 
-      for (let i = 0; i < valueList.length; i++) {
-        const blob = await generateBarcodeBlob(valueList[i], format, scale, 0, widthMils, dpi);
-        if (blob && folder) {
-          folder.file(`${valueList[i]}.png`, blob);
+      let totalItems = batches.reduce((sum, b) => sum + b.values.length, 0);
+      let processed = 0;
+
+      for (const batch of batches) {
+        const folderName = multiFormat
+          ? `${batch.format}${batch.checksumType !== 'none' ? `_${batch.checksumType}` : ''}`
+          : 'barcodes';
+        const folder = zip.folder(folderName)!;
+
+        for (const val of batch.values) {
+          const processedVal = applyChecksum(val, batch.format, batch.checksumType);
+          const blob = await generateBarcodeBlob(processedVal, batch.format, scale, 0, widthMils, dpi);
+          if (blob) folder.file(`${val}.png`, blob);
+          processed++;
+          setProgress((processed / totalItems) * 100);
         }
-        setProgress(((i + 1) / valueList.length) * 100);
       }
 
       const content = await zip.generateAsync({ type: 'blob' });
       const url = URL.createObjectURL(content);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `barcodes-${format}-${Date.now()}.zip`;
+      link.download = `barcodes-batch-${Date.now()}.zip`;
       link.click();
       URL.revokeObjectURL(url);
-      toast.success(`Downloaded ${valueList.length} barcodes`);
+      toast.success(`Downloaded ${totalItems} barcodes`);
     } catch (error) {
-      console.error('Batch generation error:', error);
-      toast.error('Failed to generate barcodes');
+      console.error('Batch ZIP error:', error);
+      toast.error('Failed to generate ZIP');
     } finally {
       setIsGenerating(false);
       setProgress(0);
     }
-  }, [values, format, scale, widthMils, dpi]);
+  }, [batches, scale, widthMils, dpi]);
 
   const exportAsPDF = useCallback(async () => {
-    const valueList = values.split('\n').map(v => v.trim()).filter(v => v);
-    if (valueList.length === 0) { toast.error('Please enter at least one value'); return; }
+    const allImages = batches.flatMap(b => b.images);
+    if (allImages.length === 0) { toast.error('No batches to export'); return; }
 
     setIsGenerating(true);
     setProgress(0);
 
     try {
       const { jsPDF } = await import('jspdf');
-      const images: { dataUrl: string; width: number; height: number; value: string }[] = [];
+      // Re-generate for PDF (margin=0 for tighter layout)
+      const pdfImages: { dataUrl: string; width: number; height: number; value: string; widthMm: number; heightMm: number; label: string }[] = [];
+      let totalItems = batches.reduce((sum, b) => sum + b.values.length, 0);
+      let processed = 0;
 
-      for (let i = 0; i < valueList.length; i++) {
-        const result = await generateBarcodeImage(valueList[i], format, scale, 0, widthMils, dpi);
-        if (result) images.push(result);
-        setProgress(((i + 1) / valueList.length) * 100);
+      for (const batch of batches) {
+        const label = batch.checksumLabel
+          ? `${batch.formatLabel} + ${batch.checksumLabel}`
+          : batch.formatLabel;
+
+        for (const val of batch.values) {
+          const processedVal = applyChecksum(val, batch.format, batch.checksumType);
+          const result = await generateBarcodeImage(processedVal, batch.format, scale, 0, widthMils, dpi);
+          if (result) pdfImages.push({ ...result, label });
+          processed++;
+          setProgress((processed / totalItems) * 100);
+        }
       }
 
-      if (images.length === 0) { toast.error('No valid barcodes generated'); return; }
+      if (pdfImages.length === 0) { toast.error('No valid barcodes generated'); return; }
 
       const pdf = new jsPDF('portrait', 'mm', 'a4');
       const pageW = 210, pageH = 297, pdfMargin = 15, gap = 10, rowGap = 8;
       const usableW = pageW - pdfMargin * 2;
 
-      // Use physical mm dimensions from the image result (computed via effectiveDpi)
-      const imgWmm = images[0].widthMm;
-      const imgHmm = images[0].heightMm;
-      const labelH = 5;
+      const imgWmm = pdfImages[0].widthMm;
+      const imgHmm = pdfImages[0].heightMm;
+      const labelH = 8;
 
       const cols = Math.max(1, Math.floor((usableW + gap) / (imgWmm + gap)));
       const cellW = (usableW - (cols - 1) * gap) / cols;
@@ -182,28 +285,27 @@ export function BatchGenerator({ onImagesGenerated, onActionsReady, widthMils = 
 
       let x = pdfMargin, y = pdfMargin;
 
-      images.forEach((img, i) => {
+      pdfImages.forEach((img, i) => {
         if (y + cellH > pageH - pdfMargin) {
           pdf.addPage();
           y = pdfMargin;
         }
-
         const col = i % cols;
         x = pdfMargin + col * (cellW + gap);
-
         pdf.addImage(img.dataUrl, 'PNG', x, y, cellW, imgHmm * scaleRatio);
-        pdf.setFontSize(8);
+        pdf.setFontSize(7);
         pdf.setFont('courier');
-        pdf.text(img.value, x + cellW / 2, y + imgHmm * scaleRatio + 4, { align: 'center' });
-
-        if (col === cols - 1) {
-          y += cellH + rowGap;
-        }
+        pdf.text(img.value, x + cellW / 2, y + imgHmm * scaleRatio + 3, { align: 'center' });
+        pdf.setFontSize(5);
+        pdf.setTextColor(120);
+        pdf.text(img.label, x + cellW / 2, y + imgHmm * scaleRatio + 6, { align: 'center' });
+        pdf.setTextColor(0);
+        if (col === cols - 1) y += cellH + rowGap;
       });
 
       const today = new Date().toISOString().split('T')[0];
       pdf.save(`batch_barcodes_${today}.pdf`);
-      toast.success(`PDF saved with ${images.length} barcodes`);
+      toast.success(`PDF saved with ${pdfImages.length} barcodes`);
     } catch (error) {
       console.error('PDF export error:', error);
       toast.error('Failed to export PDF');
@@ -211,33 +313,156 @@ export function BatchGenerator({ onImagesGenerated, onActionsReady, widthMils = 
       setIsGenerating(false);
       setProgress(0);
     }
-  }, [values, format, scale, widthMils, dpi]);
+  }, [batches, scale, widthMils, dpi]);
 
-  const isDisabled = isGenerating || !values.trim();
+  const isDisabled = isGenerating || batches.length === 0;
 
-  // Expose action functions to parent
   useEffect(() => {
     onActionsReady?.({ downloadAsZip, exportAsPDF, isDisabled, isGenerating });
-  }, [isDisabled, isGenerating, values, format, scale, widthMils, dpi]);
+  }, [isDisabled, isGenerating, batches, scale, widthMils, dpi]);
+
+  const totalImages = batches.reduce((sum, b) => sum + b.images.length, 0);
 
   return (
     <div className="space-y-6">
-      {/* Format Selection */}
-      <div className="space-y-2">
-        <Label>Barcode Format</Label>
+      {/* Current Configuration */}
+      <div className="space-y-4">
+        <Label className="font-semibold">New Batch</Label>
+
+        {/* Format */}
         <Select value={format} onValueChange={(v) => setFormat(v as BarcodeFormat)}>
-          <SelectTrigger>
+          <SelectTrigger className="h-10">
             <SelectValue />
           </SelectTrigger>
           <SelectContent className="bg-popover max-h-[300px]">
-            {BARCODE_FORMATS.map((f) => (
-              <SelectItem key={f.value} value={f.value}>
-                {f.label}
-              </SelectItem>
+            <div className="px-3 py-1.5 text-xs font-semibold text-muted-foreground uppercase tracking-wider">1D</div>
+            {formats1D.map((f) => (
+              <SelectItem key={f.value} value={f.value}>{f.label}</SelectItem>
+            ))}
+            <div className="px-3 py-1.5 text-xs font-semibold text-muted-foreground uppercase tracking-wider border-t border-border/50 mt-1 pt-2">2D</div>
+            {formats2D.map((f) => (
+              <SelectItem key={f.value} value={f.value}>{f.label}</SelectItem>
             ))}
           </SelectContent>
         </Select>
+
+        {/* Checksum */}
+        {applicableChecksums.length > 1 && (
+          <Select value={checksumType} onValueChange={(v) => setChecksumType(v as ChecksumType)}>
+            <SelectTrigger className="h-9 text-sm">
+              <SelectValue placeholder="Checksum" />
+            </SelectTrigger>
+            <SelectContent className="bg-popover">
+              {applicableChecksums.map((cs) => (
+                <SelectItem key={cs.value} value={cs.value} className="text-sm">{cs.label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+
+        {/* Random Generator */}
+        <div className="p-3 bg-secondary/50 rounded-lg space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1">
+              <Label className="text-xs">Count</Label>
+              <Input
+                type="number"
+                value={count}
+                onChange={(e) => setCount(Math.max(1, Math.min(1000, parseInt(e.target.value) || 1)))}
+                min={1}
+                max={1000}
+                className="font-mono h-8"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">String Length</Label>
+              <Input
+                type="number"
+                value={stringLength}
+                onChange={(e) => setStringLength(Math.max(1, Math.min(100, parseInt(e.target.value) || 8)))}
+                min={1}
+                max={100}
+                className="font-mono h-8"
+              />
+            </div>
+          </div>
+          <Button onClick={generateRandomValues} variant="outline" size="sm" className="w-full gap-2 h-8 text-xs">
+            <Shuffle className="h-3.5 w-3.5" />
+            Generate {count} Random Values
+          </Button>
+        </div>
+
+        {/* Values Textarea */}
+        <Textarea
+          value={values}
+          onChange={(e) => setValues(e.target.value)}
+          placeholder="Enter barcode values, one per line..."
+          className="min-h-[120px] font-mono text-sm"
+        />
+        <p className="text-xs text-muted-foreground">
+          {values.split('\n').filter(v => v.trim()).length} values ready
+        </p>
+
+        {/* Add to Batch Button */}
+        <Button
+          onClick={addToBatch}
+          disabled={isAdding || !values.trim()}
+          className="w-full gap-2 h-11"
+        >
+          <Plus className="h-4 w-4" />
+          {isAdding ? 'Adding...' : 'Add to Batch'}
+        </Button>
       </div>
+
+      {/* Committed Batches */}
+      {batches.length > 0 && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Package className="h-4 w-4 text-primary" />
+              <Label className="font-semibold">Committed Batches</Label>
+            </div>
+            <Button variant="ghost" size="sm" onClick={clearAllBatches} className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive">
+              Clear All
+            </Button>
+          </div>
+
+          <div className="space-y-1.5">
+            {batches.map((batch) => {
+              const label = batch.checksumLabel
+                ? `${batch.formatLabel} + ${batch.checksumLabel}`
+                : batch.formatLabel;
+              return (
+                <div
+                  key={batch.id}
+                  className="flex items-center gap-2 p-2.5 bg-secondary/50 rounded-lg border border-border/30"
+                >
+                  <span className="text-xs font-semibold text-primary bg-primary/10 px-2 py-0.5 rounded shrink-0">
+                    {label}
+                  </span>
+                  <span className="text-xs text-muted-foreground flex-1">
+                    {batch.images.length} barcode{batch.images.length !== 1 ? 's' : ''}
+                  </span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => removeBatch(batch.id)}
+                    className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive shrink-0"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </Button>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="p-2.5 bg-primary/5 rounded-lg border border-primary/20">
+            <p className="text-xs font-mono text-primary">
+              {totalImages} total barcode{totalImages !== 1 ? 's' : ''} in {batches.length} batch{batches.length !== 1 ? 'es' : ''}
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Output Size */}
       <div className="space-y-3">
@@ -270,65 +495,15 @@ export function BatchGenerator({ onImagesGenerated, onActionsReady, widthMils = 
         </div>
       </div>
 
-      {/* Random Generation Controls */}
-      <div className="p-4 bg-secondary/50 rounded-lg space-y-4">
-        <p className="text-sm font-mono text-foreground">Random Generator</p>
-
-        <div className="grid grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <Label className="text-sm">Count</Label>
-            <Input
-              type="number"
-              value={count}
-              onChange={(e) => setCount(Math.max(1, Math.min(1000, parseInt(e.target.value) || 1)))}
-              min={1}
-              max={1000}
-              className="font-mono"
-            />
-          </div>
-          <div className="space-y-2">
-            <Label className="text-sm">String Length</Label>
-            <Input
-              type="number"
-              value={stringLength}
-              onChange={(e) => setStringLength(Math.max(1, Math.min(100, parseInt(e.target.value) || 8)))}
-              min={1}
-              max={100}
-              className="font-mono"
-            />
-          </div>
-        </div>
-
-        <Button onClick={generateRandomValues} variant="outline" className="w-full gap-2">
-          <Shuffle className="h-4 w-4" />
-          Generate {count} Random Values
-        </Button>
-      </div>
-
-      {/* Values Input */}
-      <div className="space-y-2">
-        <Label>Values (one per line)</Label>
-        <Textarea
-          value={values}
-          onChange={(e) => setValues(e.target.value)}
-          placeholder="Enter barcode values, one per line..."
-          className="min-h-[150px] font-mono text-sm"
-        />
-        <p className="text-xs text-muted-foreground">
-          {values.split('\n').filter(v => v.trim()).length} values entered
-        </p>
-      </div>
-
       {/* Progress */}
       {isGenerating && (
         <div className="space-y-2">
           <Progress value={progress} className="h-2" />
           <p className="text-xs text-center text-muted-foreground">
-            Generating... {Math.round(progress)}%
+            Exporting... {Math.round(progress)}%
           </p>
         </div>
       )}
-
     </div>
   );
 }

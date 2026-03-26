@@ -75,6 +75,10 @@ export interface BarcodeImageResult {
   widthMm: number;
   /** Physical height in mm (based on effective DPI). */
   heightMm: number;
+  /** Optional label for the barcode format (used by batch mode). */
+  formatLabel?: string;
+  /** Optional label for the checksum type (used by batch mode). */
+  checksumLabel?: string;
 }
 
 async function render1DToCanvas(
@@ -83,6 +87,7 @@ async function render1DToCanvas(
   scale: number,
   margin: number,
   modulePixels: number,
+  height = 100,
 ): Promise<{ dataUrl: string; width: number; height: number }> {
   const renderValue = normalizeForRendering(value, format);
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -91,7 +96,7 @@ async function render1DToCanvas(
   JsBarcode(svg, renderValue, {
     format,
     width: barWidth,
-    height: 100 * scale,
+    height: height * scale,
     displayValue: false,
     lineColor: '#000000',
     background: '#FFFFFF',
@@ -171,6 +176,7 @@ function render2DToCanvas(
  * @param margin    Quiet-zone margin in base pixels (scaled internally).
  * @param widthMils X-dimension in mils (default 7.5 — GS1 healthcare minimum).
  * @param dpi       Target print DPI (default 300).
+ * @param height    Bar height in base pixels for 1D barcodes (default 100).
  */
 export async function generateBarcodeImage(
   value: string,
@@ -179,6 +185,7 @@ export async function generateBarcodeImage(
   margin = 10,
   widthMils = 7.5,
   dpi = 300,
+  height = 100,
 ): Promise<BarcodeImageResult | null> {
   const validation = validateInput(value, format);
   if (!validation.valid) return null;
@@ -191,7 +198,7 @@ export async function generateBarcodeImage(
     if (is2DBarcode(format)) {
       raw = render2DToCanvas(value, format, scale, margin, modulePixels);
     } else {
-      raw = await render1DToCanvas(value, format, scale, margin, modulePixels);
+      raw = await render1DToCanvas(value, format, scale, margin, modulePixels, height);
     }
     return {
       dataUrl: injectPngDpi(raw.dataUrl, effectiveDpi),
@@ -219,8 +226,9 @@ export async function generateBarcodeBlob(
   margin = 10,
   widthMils = 7.5,
   dpi = 300,
+  height = 100,
 ): Promise<Blob | null> {
-  const result = await generateBarcodeImage(value, format, scale, margin, widthMils, dpi);
+  const result = await generateBarcodeImage(value, format, scale, margin, widthMils, dpi, height);
   if (!result) return null;
 
   // Convert data URL to Blob directly (preserves pHYs DPI chunk).

@@ -135,8 +135,6 @@ const Index = () => {
                   <BatchGenerator
                     onImagesGenerated={setBatchImages}
                     onActionsReady={(actions) => { batchActionsRef.current = actions; }}
-                    widthMils={config.widthMils}
-                    dpi={config.dpi}
                   />
                 </TabsContent>
                 

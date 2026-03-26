@@ -656,10 +656,13 @@ export function snapToPixelGrid(widthMils: number, dpi: number): {
 }
 
 export function getDefaultConfig(): BarcodeConfig {
+  // Default: 2 px module at 300 DPI = 6.67 mil (0.169 mm).
+  // 7.5 mil is NOT achievable at 300 DPI (7.5 × 300/1000 = 2.25 → rounds to 2 px).
+  const { actualMils } = snapToPixelGrid(7.5, 300);
   return {
     format: 'CODE39',
     text: 'BARCODE123',
-    widthMils: 7.5,
+    widthMils: +actualMils.toFixed(2),
     dpi: 300,
     height: 100,
     displayValue: true,
