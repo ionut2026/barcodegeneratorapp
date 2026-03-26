@@ -1,7 +1,9 @@
 import { BarcodeImageResult } from '@/lib/barcodeImageGenerator';
+import { injectPngDpi } from '@/lib/barcodeImageGenerator';
 import { Button } from '@/components/ui/button';
-import { Printer, Layers, FileArchive, FileText } from 'lucide-react';
+import { Printer, Layers, FileArchive, FileText, Download } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { toast } from 'sonner';
 
 interface BatchPreviewProps {
   images: BarcodeImageResult[];
@@ -10,10 +12,25 @@ interface BatchPreviewProps {
   onExportPDF?: () => void;
   isGenerating: boolean;
   actionsDisabled?: boolean;
+  dpi?: number;
 }
 
-export function BatchPreview({ images, onPrint, onDownloadZip, onExportPDF, isGenerating, actionsDisabled }: BatchPreviewProps) {
+export function BatchPreview({ images, onPrint, onDownloadZip, onExportPDF, isGenerating, actionsDisabled, dpi = 300 }: BatchPreviewProps) {
   const btnDisabled = isGenerating || actionsDisabled;
+
+  const downloadBarcodeImage = (img: BarcodeImageResult) => {
+    try {
+      const dpiUrl = injectPngDpi(img.dataUrl, dpi);
+      const link = document.createElement('a');
+      link.download = `barcode-${img.value}.png`;
+      link.href = dpiUrl;
+      link.click();
+      toast.success('Downloaded');
+    } catch (error) {
+      console.error('Download error:', error);
+      toast.error('Failed to download');
+    }
+  };
 
   // Group images by format+checksum label for section headers
   const hasLabels = images.some(img => img.formatLabel);
@@ -100,23 +117,35 @@ export function BatchPreview({ images, onPrint, onDownloadZip, onExportPDF, isGe
                       </span>
                     </div>
                     <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                      {group.images.map((img, i) => (
-                        <div
-                          key={`${img.value}-${i}`}
-                          className="flex flex-col items-center gap-2 p-3 rounded-xl bg-card/50 border border-border/30"
-                        >
-                          <img
-                            src={img.dataUrl}
-                            alt={img.value}
-                            className="max-w-full h-auto"
-                            style={{ imageRendering: 'pixelated' }}
-                          />
-                          <span className="text-xs font-mono text-foreground text-center break-all leading-tight">
-                            {img.value}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
+                       {group.images.map((img, i) => (
+                         <div
+                           key={`${img.value}-${i}`}
+                           className="flex flex-col items-center gap-2 p-3 rounded-xl bg-card/50 border border-border/30 group hover:border-primary/50 transition-colors"
+                         >
+                           <div className="relative w-full">
+                             <img
+                               src={img.dataUrl}
+                               alt={img.value}
+                               className="max-w-full h-auto"
+                               style={{ imageRendering: 'pixelated' }}
+                             />
+                             <Button
+                               size="sm"
+                               variant="ghost"
+                               onClick={() => downloadBarcodeImage(img)}
+                               disabled={isGenerating}
+                               className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity h-8 w-8 p-0"
+                               title="Download as PNG"
+                             >
+                               <Download className="h-4 w-4" />
+                             </Button>
+                           </div>
+                           <span className="text-xs font-mono text-foreground text-center break-all leading-tight">
+                             {img.value}
+                           </span>
+                         </div>
+                       ))}
+                     </div>
                   </div>
                 ))
               ) : (
@@ -125,14 +154,26 @@ export function BatchPreview({ images, onPrint, onDownloadZip, onExportPDF, isGe
                   {images.map((img, i) => (
                     <div
                       key={`${img.value}-${i}`}
-                      className="flex flex-col items-center gap-2 p-3 rounded-xl bg-card/50 border border-border/30"
+                      className="flex flex-col items-center gap-2 p-3 rounded-xl bg-card/50 border border-border/30 group hover:border-primary/50 transition-colors"
                     >
-                      <img
-                        src={img.dataUrl}
-                        alt={img.value}
-                        className="max-w-full h-auto"
-                        style={{ imageRendering: 'pixelated' }}
-                      />
+                      <div className="relative w-full">
+                        <img
+                          src={img.dataUrl}
+                          alt={img.value}
+                          className="max-w-full h-auto"
+                          style={{ imageRendering: 'pixelated' }}
+                        />
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => downloadBarcodeImage(img)}
+                          disabled={isGenerating}
+                          className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity h-8 w-8 p-0"
+                          title="Download as PNG"
+                        >
+                          <Download className="h-4 w-4" />
+                        </Button>
+                      </div>
                       <span className="text-xs font-mono text-foreground text-center break-all leading-tight">
                         {img.value}
                       </span>

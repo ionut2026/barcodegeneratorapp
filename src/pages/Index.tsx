@@ -170,6 +170,7 @@ const Index = () => {
                 onExportPDF={() => batchActionsRef.current?.exportAsPDF()}
                 isGenerating={batchActionsRef.current?.isGenerating ?? false}
                 actionsDisabled={batchActionsRef.current?.isDisabled ?? true}
+                dpi={config.dpi}
               />
             ) : activeTab === 'checksum' ? (
               <ChecksumPreview
