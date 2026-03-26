@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { injectPngDpi } from '@/lib/barcodeImageGenerator';
 import { BarcodeImageResult } from '@/lib/barcodeImageGenerator';
 
@@ -14,6 +14,12 @@ describe('BatchPreview - PNG Download', () => {
     formatLabel: 'Code 39',
     checksumLabel: undefined,
   };
+
+  beforeEach(() => {
+    // Mock URL.createObjectURL
+    global.URL.createObjectURL = vi.fn(() => 'blob:mock-url');
+    global.URL.revokeObjectURL = vi.fn();
+  });
 
   it('should inject DPI metadata into PNG data URL', () => {
     const dpi = 300;

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import JsBarcode from 'jsbarcode';
 import bwipjs from 'bwip-js';
-import { BarcodeConfig, applyChecksum, is2DBarcode, QUALITY_LEVELS, normalizeForRendering } from '@/lib/barcodeUtils';
+import { BarcodeConfig, applyChecksum, is2DBarcode, QUALITY_LEVELS, normalizeForRendering, snapToPixelGrid } from '@/lib/barcodeUtils';
 import { injectPngDpi } from '@/lib/barcodeImageGenerator';
 import { ValidationService, ValidationCertificate } from '@/lib/validationService';
 import { ImageEffectsConfig, getDefaultEffectsConfig } from '@/components/ImageEffects';
@@ -67,6 +67,7 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
   const [copied, setCopied] = useState(false);
   const [renderError, setRenderError] = useState<string | null>(null);
   const [barcodeDataUrl, setBarcodeDataUrl] = useState<string | null>(null);
+  const [barcodeDimensions, setBarcodeDimensions] = useState<{ width: number; height: number } | null>(null);
   const [certificate, setCertificate] = useState<ValidationCertificate | null>(null);
   const [isCertifying, setIsCertifying] = useState(false);
   const [certEnabled, setCertEnabled] = useState(false);
@@ -74,6 +75,9 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
   const certifyGenerationRef = useRef(0);
 
   const is2D = is2DBarcode(config.format);
+
+  // Calculate pixel snapping for bar width
+  const snap = useMemo(() => snapToPixelGrid(config.widthMils, config.dpi), [config.widthMils, config.dpi]);
 
   // Compute the barcode text with checksum applied
   const barcodeText = useMemo(() => {
@@ -107,16 +111,21 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
       const renderText = normalizeForRendering(barcodeText, config.format);
       JsBarcode(svgRef.current, renderText, {
         format: config.format,
-         width: Math.max(1, Math.round(effectiveWidth * config.scale)),
-         height: config.height * config.scale,
+        width: Math.max(1, Math.round(effectiveWidth * config.scale)),
+        height: config.height * config.scale,
         displayValue: config.displayValue,
-         fontSize: config.fontSize * config.scale,
+        fontSize: config.fontSize * config.scale,
         lineColor: config.lineColor,
         background: config.background,
-         margin: config.margin * config.scale,
+        margin: config.margin * config.scale,
         font: 'JetBrains Mono',
       });
       snapSvgToPixels(svgRef.current);
+      // Capture barcode dimensions
+      const bbox = svgRef.current.getBBox?.();
+      if (bbox) {
+        setBarcodeDimensions({ width: bbox.width, height: bbox.height });
+      }
       setRenderError(null);
     } catch (error) {
       console.error('Barcode render error:', error);
@@ -701,6 +710,39 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
           </div>
         )}
       </div>
+
+      {/* Barcode Dimensions Info */}
+      {isValid && config.text.trim() && !renderError && (
+        <div className="mt-4 p-4 rounded-xl border border-border/50 bg-card/50">
+          <div className="grid grid-cols-2 gap-4 text-sm">
+            <div>
+              <span className="text-muted-foreground block text-xs font-semibold mb-1">Bar Width (X-dim)</span>
+              <span className="font-mono text-primary">
+                {snap.requestedMils.toFixed(2)} → {snap.actualMils.toFixed(2)} mil
+              </span>
+              <span className="text-muted-foreground text-xs block mt-0.5">
+                ({snap.modulePixels} px @ {config.dpi} DPI)
+              </span>
+            </div>
+            <div>
+              <span className="text-muted-foreground block text-xs font-semibold mb-1">Physical Size</span>
+              <span className="font-mono text-primary">
+                {(snap.modulePixels * 25.4 / config.dpi).toFixed(2)} mm
+              </span>
+              <span className="text-muted-foreground text-xs block mt-0.5">
+                ({(snap.modulePixels * 25.4 / config.dpi / 25.4).toFixed(3)} in)
+              </span>
+            </div>
+          </div>
+          {snap.requestedMils.toFixed(2) !== snap.actualMils.toFixed(2) && (
+            <div className="mt-3 p-2 rounded-lg bg-amber-500/10 border border-amber-500/20">
+              <p className="text-xs text-amber-400/90">
+                ⚠ Requested {snap.requestedMils.toFixed(2)} mil was adjusted to {snap.actualMils.toFixed(2)} mil due to pixel snapping at {config.dpi} DPI
+              </p>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="mt-4 flex items-center gap-2">
         <Switch

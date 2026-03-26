@@ -32,6 +32,94 @@ export function BatchPreview({ images, onPrint, onDownloadZip, onExportPDF, isGe
     }
   };
 
+  const downloadAllPngs = async () => {
+    if (images.length === 0) {
+      toast.error('No barcodes to download');
+      return;
+    }
+
+    try {
+      const JSZip = (await import('jszip')).default;
+      const zip = new JSZip();
+      let completedCount = 0;
+
+      for (const img of images) {
+        try {
+          // Load barcode image
+          const barcodeImage = new Image();
+          await new Promise<void>((resolve, reject) => {
+            barcodeImage.onload = () => resolve();
+            barcodeImage.onerror = () => reject(new Error('Failed to load image'));
+            barcodeImage.src = img.dataUrl;
+          });
+
+          // Create canvas with barcode + text
+          const textHeight = 30;
+          const canvas = document.createElement('canvas');
+          canvas.width = img.width;
+          canvas.height = img.height + textHeight;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) throw new Error('Failed to get canvas context');
+
+          // Fill background
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+          // Draw barcode image
+          ctx.drawImage(barcodeImage, 0, 0, img.width, img.height);
+
+          // Draw barcode value text below
+          ctx.fillStyle = '#000000';
+          ctx.font = 'bold 14px monospace';
+          ctx.textAlign = 'center';
+          ctx.fillText(img.value, img.width / 2, img.height + 10);
+
+          // Convert canvas to blob with DPI metadata
+          const canvasBlob = await new Promise<Blob>((resolve) => {
+            canvas.toBlob((blob) => {
+              resolve(blob || new Blob());
+            }, 'image/png');
+          });
+
+          // Inject DPI metadata
+          const reader = new FileReader();
+          reader.onload = () => {
+            const base64 = (reader.result as string).split(',')[1];
+            const dpiUrl = injectPngDpi(`data:image/png;base64,${base64}`, dpi);
+            // Store the data URL for zip
+            zip.file(`barcode-${img.value}.png`, dpiUrl.split(',')[1], { base64: true });
+            completedCount++;
+          };
+          reader.readAsDataURL(canvasBlob);
+        } catch (error) {
+          console.warn(`Failed to add image for ${img.value}:`, error);
+          completedCount++;
+        }
+      }
+
+      // Wait for all images to be processed
+      const checkComplete = setInterval(async () => {
+        if (completedCount === images.length) {
+          clearInterval(checkComplete);
+          const content = await zip.generateAsync({ type: 'blob' });
+          const url = URL.createObjectURL(content);
+          const link = document.createElement('a');
+          link.href = url;
+          link.download = `barcodes-individual-${Date.now()}.zip`;
+          link.click();
+          URL.revokeObjectURL(url);
+          toast.success(`Downloaded ${images.length} PNG images with values`);
+        }
+      }, 50);
+
+      // Timeout after 10 seconds
+      setTimeout(() => clearInterval(checkComplete), 10000);
+    } catch (error) {
+      console.error('PNG download error:', error);
+      toast.error('Failed to download PNG files');
+    }
+  };
+
   // Group images by format+checksum label for section headers
   const hasLabels = images.some(img => img.formatLabel);
   const groups: { label: string; images: BarcodeImageResult[] }[] = [];
@@ -56,6 +144,15 @@ export function BatchPreview({ images, onPrint, onDownloadZip, onExportPDF, isGe
         <h2 className="text-lg font-medium text-muted-foreground">Batch Preview</h2>
         {images.length > 0 && (
           <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              onClick={downloadAllPngs}
+              disabled={btnDisabled}
+              className="gap-2 rounded-xl h-10 px-4 download-btn text-white font-medium"
+            >
+              <Download className="h-4 w-4" />
+              PNG
+            </Button>
             <Button
               size="sm"
               onClick={onDownloadZip}
