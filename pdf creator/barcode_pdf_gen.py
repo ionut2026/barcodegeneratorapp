@@ -27,10 +27,6 @@ COLUMNS = [
 ]
 COLS_PER_ROW = len(COLUMNS)
 
-FORMAT_CHECKSUM_TYPE = {
-    "CODE39": "Mod 43", "codabar": "Mod 16",
-    "ITF": "Mod 10", "MSI": "Mod 10/11",
-}
 
 BORDER_WIDTH = 0.2 * mm
 MARGIN_TOP = 20 * mm
@@ -45,6 +41,277 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Checksum verification — detect if a barcode value has a valid check digit
+# ---------------------------------------------------------------------------
+
+MOD43_CHARS = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ-. $/+%'
+CODABAR_CHARS = '0123456789-$:/.+'
+CODABAR_JAPAN_CHARS = '0123456789-$:/.+ABCD'
+CODABAR_MOD16_JAPAN_CHARS = '0123456789-$:/.+ABCDTN*E'
+
+
+def _digits(data: str) -> list[int]:
+    return [int(c) for c in data if c.isdigit()]
+
+
+# ── CODE39 ──
+
+def _verify_mod43(data: str) -> bool:
+    if len(data) < 2:
+        return False
+    body, check = data[:-1].upper(), data[-1].upper()
+    total = sum(MOD43_CHARS.find(c) for c in body if MOD43_CHARS.find(c) >= 0)
+    return MOD43_CHARS[total % 43] == check
+
+
+# ── Codabar checksums ──
+
+def _verify_mod16(data: str) -> bool:
+    if len(data) < 2:
+        return False
+    body, check = data[:-1], data[-1]
+    total = sum(CODABAR_CHARS.find(c) for c in body if CODABAR_CHARS.find(c) >= 0)
+    return CODABAR_CHARS[total % 16] == check
+
+
+def _verify_japan_nw7(data: str) -> bool:
+    if len(data) < 2:
+        return False
+    body, check = data[:-1].upper(), data[-1].upper()
+    total = sum(CODABAR_JAPAN_CHARS.find(c) for c in body if CODABAR_JAPAN_CHARS.find(c) >= 0)
+    expected = (16 - (total % 16)) % 16
+    return CODABAR_JAPAN_CHARS[expected] == check
+
+
+def _verify_jrc(data: str) -> bool:
+    digits = _digits(data)
+    if len(digits) < 2:
+        return False
+    body, check = digits[:-1], digits[-1]
+    total = sum(d * (1 if i % 2 == 0 else 2) for i, d in enumerate(body))
+    return (10 - (total % 10)) % 10 == check
+
+
+def _verify_luhn(data: str) -> bool:
+    digits = _digits(data)
+    if len(digits) < 2:
+        return False
+    body, check = digits[:-1], digits[-1]
+    total = 0
+    for i, d in enumerate(reversed(body)):
+        if (len(body) - 1 - (len(body) - 1 - i)) % 2 == 1:
+            d *= 2
+            if d > 9:
+                d -= 9
+        total += d
+    # Simpler: match the JS exactly
+    digits_all = _digits(data)
+    total = 0
+    for i in range(len(digits_all) - 1, -1, -1):
+        d = digits_all[i]
+        if (len(digits_all) - i) % 2 == 0:
+            d *= 2
+            if d > 9:
+                d -= 9
+        total += d
+    return total % 10 == 0
+
+
+def _verify_mod11_pzn(data: str) -> bool:
+    digits = _digits(data)
+    if len(digits) < 2:
+        return False
+    body, check = digits[:-1], digits[-1]
+    total = sum(d * (i + 1) for i, d in enumerate(body))
+    expected = total % 11
+    return expected < 10 and expected == check
+
+
+def _verify_mod11a(data: str) -> bool:
+    digits = _digits(data)
+    if len(digits) < 2:
+        return False
+    body, check = digits[:-1], digits[-1]
+    total = sum(d * (i + 2) for i, d in enumerate(reversed(body)))
+    remainder = total % 11
+    expected = 0 if remainder == 0 else 11 - remainder
+    return expected < 10 and expected == check
+
+
+def _verify_mod10_weight2(data: str) -> bool:
+    digits = _digits(data)
+    if len(digits) < 2:
+        return False
+    body, check = digits[:-1], digits[-1]
+    total = 0
+    for i, d in enumerate(body):
+        w = 1 if i % 2 == 0 else 2
+        wd = d * w
+        if wd > 9:
+            wd -= 9
+        total += wd
+    return (10 - (total % 10)) % 10 == check
+
+
+def _verify_mod10_weight3(data: str) -> bool:
+    digits = _digits(data)
+    if len(digits) < 2:
+        return False
+    body, check = digits[:-1], digits[-1]
+    total = sum(d * (1 if i % 2 == 0 else 3) for i, d in enumerate(body))
+    return (10 - (total % 10)) % 10 == check
+
+
+def _verify_7check_dr(data: str) -> bool:
+    digits = _digits(data)
+    if len(digits) < 2:
+        return False
+    body, check = digits[:-1], digits[-1]
+    s = sum(body)
+    dr = s
+    while dr > 9:
+        dr = sum(int(c) for c in str(dr))
+    return (7 - (dr % 7)) % 7 == check
+
+
+def _verify_mod16_japan(data: str) -> bool:
+    if len(data) < 2:
+        return False
+    body, check = data[:-1].upper(), data[-1].upper()
+    total = sum(CODABAR_MOD16_JAPAN_CHARS.find(c) for c in body if CODABAR_MOD16_JAPAN_CHARS.find(c) >= 0)
+    return CODABAR_MOD16_JAPAN_CHARS[total % 16] == check
+
+
+# ── Numeric formats ──
+
+def _verify_gs1_mod10(data: str) -> bool:
+    digits = _digits(data)
+    if len(digits) < 2:
+        return False
+    body, check = digits[:-1], digits[-1]
+    total = sum(d * (3 if (len(body) - 1 - i) % 2 == 0 else 1) for i, d in enumerate(body))
+    return (10 - (total % 10)) % 10 == check
+
+
+def _verify_luhn_mod10(data: str) -> bool:
+    digits = _digits(data)
+    if len(digits) < 2:
+        return False
+    body, check = digits[:-1], digits[-1]
+    total = 0
+    for i, d in enumerate(reversed(body)):
+        if i % 2 == 0:
+            d *= 2
+            if d > 9:
+                d -= 9
+        total += d
+    return (10 - (total % 10)) % 10 == check
+
+
+def _verify_mod11(data: str) -> bool:
+    digits = _digits(data)
+    if len(digits) < 2:
+        return False
+    body, check = digits[:-1], digits[-1]
+    weights = [2, 3, 4, 5, 6, 7]
+    total = sum(d * weights[i % 6] for i, d in enumerate(reversed(body)))
+    remainder = total % 11
+    expected = 0 if remainder == 0 else 11 - remainder
+    return expected < 10 and expected == check
+
+
+def _verify_ean13(data: str) -> bool:
+    digits = _digits(data)
+    if len(digits) != 13:
+        return False
+    body, check = digits[:12], digits[12]
+    total = sum(d * (1 if i % 2 == 0 else 3) for i, d in enumerate(body))
+    return (10 - (total % 10)) % 10 == check
+
+
+def _verify_ean8(data: str) -> bool:
+    digits = _digits(data)
+    if len(digits) != 8:
+        return False
+    body, check = digits[:7], digits[7]
+    total = sum(d * (3 if i % 2 == 0 else 1) for i, d in enumerate(body))
+    return (10 - (total % 10)) % 10 == check
+
+
+def _verify_upc(data: str) -> bool:
+    digits = _digits(data)
+    if len(digits) != 12:
+        return False
+    body, check = digits[:11], digits[11]
+    odd_sum = sum(body[i] for i in range(0, 11, 2))
+    even_sum = sum(body[i] for i in range(1, 11, 2))
+    return (10 - ((odd_sum * 3 + even_sum) % 10)) % 10 == check
+
+
+# ── Checksum detection ──
+
+# Formats with intrinsic checksums (always present)
+_INTRINSIC = {
+    "EAN13": _verify_ean13,
+    "EAN8": _verify_ean8,
+    "UPC": _verify_upc,
+    "UPCE": _verify_upc,
+    "ITF14": _verify_gs1_mod10,
+}
+
+# Formats with optional checksums — try each and return the first match
+_OPTIONAL = {
+    "CODE39": [
+        ("Mod 43", _verify_mod43),
+    ],
+    "CODABAR": [
+        ("Mod 16", _verify_mod16),
+        ("Japan NW-7", _verify_japan_nw7),
+        ("JRC", _verify_jrc),
+        ("Luhn", _verify_luhn),
+        ("Mod 11 PZN", _verify_mod11_pzn),
+        ("Mod 11-A", _verify_mod11a),
+        ("Mod 10 Weight 2", _verify_mod10_weight2),
+        ("Mod 10 Weight 3", _verify_mod10_weight3),
+        ("7 Check DR", _verify_7check_dr),
+        ("Mod 16 Japan", _verify_mod16_japan),
+    ],
+    "ITF": [
+        ("Mod 10", _verify_gs1_mod10),
+    ],
+    "MSI": [
+        ("Mod 10", _verify_luhn_mod10),
+        ("Mod 11", _verify_mod11),
+    ],
+}
+
+
+def detect_checksum(fmt: str, data: str) -> str:
+    """Return the checksum name if the data has a valid check digit, else ''."""
+    fmt_upper = fmt.upper()
+
+    # Intrinsic checksums — always present for these formats
+    verifier = _INTRINSIC.get(fmt_upper)
+    if verifier:
+        return "Intrinsic" if verifier(data) else ""
+
+    # Optional checksums — check each candidate
+    candidates = _OPTIONAL.get(fmt_upper, [])
+    # Also check case-preserved format name (e.g. "codabar" vs "CODABAR")
+    if not candidates:
+        for key, val in _OPTIONAL.items():
+            if key.upper() == fmt_upper:
+                candidates = val
+                break
+
+    for name, verifier in candidates:
+        if verifier(data):
+            return name
+
+    return ""
+
 
 def prompt(msg: str) -> str:
     """Read a line from stdin, flushing stdout first (fixes PowerShell buffering)."""
@@ -110,17 +377,20 @@ def best_fit_column(image_path: str) -> int:
 
 
 def annotation_text(label: dict) -> str:
-    """Build the text shown below a rectangle."""
+    """Build the text above a rectangle: format + checksum (if detected)."""
     fmt = label.get("format", "")
     data = label.get("data", "")
-    if not data:
+    if not fmt and not data:
         return ""
-    chk = FORMAT_CHECKSUM_TYPE.get(fmt, "")
-    if fmt and chk:
-        return f"{fmt} | {data} — {chk}"
-    if fmt:
-        return f"{fmt} | {data}"
-    return data
+    if not fmt:
+        # No format parsed from filename — show the data/filename as-is
+        return data
+    chk = detect_checksum(fmt, data)
+    if chk == "Intrinsic":
+        return fmt
+    if chk:
+        return f"{fmt} + {chk}"
+    return f"{fmt} No Checksum"
 
 
 # ---------------------------------------------------------------------------
@@ -193,10 +463,12 @@ def show_help():
     print("""
   Commands:
     generate                       Generate the PDF now
+    borders                        Toggle rectangle borders on/off
     auto                           Auto-assign all images to best-fit columns
     rescan                         Re-scan folder for new/removed images
     remove <row> <col>             Remove image from a cell
-    add <col> <filename>           Add image to a column
+    add <col> <filename>           Add image to bottom of a column
+    add <row> <col> <filename>     Add image at specific row and column
     replace <row> <col> <filename> Replace image in a cell
     move <r1> <c1> <r2> <c2>      Move image between cells
     clear                          Remove all images
@@ -219,6 +491,7 @@ def resolve_file(name: str) -> str | None:
 
 
 def interactive_edit(buckets: dict[int, list[dict]]) -> dict[int, list[dict]] | None:
+    show_borders = True
     show_layout(buckets)
     show_help()
 
@@ -238,10 +511,16 @@ def interactive_edit(buckets: dict[int, list[dict]]) -> dict[int, list[dict]] | 
             output_path = os.path.join(SCRIPT_DIR, "label_sheet.pdf")
             try:
                 rows = build_rows(buckets)
-                render_pdf(rows, output_path)
+                render_pdf(rows, output_path, show_borders)
                 print("  You can keep editing and type 'generate' again to update.\n")
             except PermissionError:
                 print("  ERROR: Cannot write PDF — close it in your viewer first!")
+            continue
+
+        if action == "borders":
+            show_borders = not show_borders
+            state = "ON" if show_borders else "OFF"
+            print(f"  Borders: {state}. Type 'generate' to apply.")
             continue
 
         if action == "quit":
@@ -323,24 +602,44 @@ def interactive_edit(buckets: dict[int, list[dict]]) -> dict[int, list[dict]] | 
             continue
 
         if action == "add":
-            if len(parts) != 3:
-                print("  Usage: add <col> <filename>")
+            # add <col> <filename>           — append to bottom of column
+            # add <row> <col> <filename>     — insert at specific row
+            if len(parts) == 3:
+                try:
+                    ci = int(parts[1]) - 1
+                except ValueError:
+                    print("  Usage: add <col> <filename>  OR  add <row> <col> <filename>")
+                    continue
+                if not (0 <= ci < COLS_PER_ROW):
+                    print(f"  Column must be 1-{COLS_PER_ROW}.")
+                    continue
+                fp = resolve_file(parts[2])
+                if not fp:
+                    print(f"  File not found: {parts[2]}")
+                    show_available(buckets)
+                    continue
+                buckets[ci].append(make_label(fp, ci))
+                print(f"  Added {os.path.basename(fp)} to column {ci+1}.")
+            elif len(parts) == 4:
+                try:
+                    ri, ci = int(parts[1]) - 1, int(parts[2]) - 1
+                except ValueError:
+                    print("  Usage: add <row> <col> <filename>")
+                    continue
+                if not (0 <= ci < COLS_PER_ROW):
+                    print(f"  Column must be 1-{COLS_PER_ROW}.")
+                    continue
+                fp = resolve_file(parts[3])
+                if not fp:
+                    print(f"  File not found: {parts[3]}")
+                    show_available(buckets)
+                    continue
+                pos = min(ri, len(buckets[ci]))
+                buckets[ci].insert(pos, make_label(fp, ci))
+                print(f"  Added {os.path.basename(fp)} to R{pos+1} C{ci+1}.")
+            else:
+                print("  Usage: add <col> <filename>  OR  add <row> <col> <filename>")
                 continue
-            try:
-                ci = int(parts[1]) - 1
-            except ValueError:
-                print("  Usage: add <col> <filename>")
-                continue
-            if not (0 <= ci < COLS_PER_ROW):
-                print(f"  Column must be 1-{COLS_PER_ROW}.")
-                continue
-            fp = resolve_file(parts[2])
-            if not fp:
-                print(f"  File not found: {parts[2]}")
-                show_available(buckets)
-                continue
-            buckets[ci].append(make_label(fp, ci))
-            print(f"  Added {os.path.basename(fp)} to column {ci+1}.")
             show_layout(buckets)
             continue
 
@@ -404,14 +703,15 @@ def interactive_edit(buckets: dict[int, list[dict]]) -> dict[int, list[dict]] | 
 # PDF rendering
 # ---------------------------------------------------------------------------
 
-def draw_label(c: canvas.Canvas, x: float, y: float, label: dict):
+def draw_label(c: canvas.Canvas, x: float, y: float, label: dict, show_borders: bool = True):
     rect_w, rect_h = label["rect_w"], label["rect_h"]
     img_w, img_h = label["img_w"], label["img_h"]
 
     # Rectangle
-    c.setStrokeColorRGB(0, 0, 0)
-    c.setLineWidth(BORDER_WIDTH)
-    c.rect(x, y, rect_w, rect_h, stroke=1, fill=0)
+    if show_borders:
+        c.setStrokeColorRGB(0, 0, 0)
+        c.setLineWidth(BORDER_WIDTH)
+        c.rect(x, y, rect_w, rect_h, stroke=1, fill=0)
 
     # Image (centered, right-side up)
     img_path = label["image"]
@@ -426,11 +726,11 @@ def draw_label(c: canvas.Canvas, x: float, y: float, label: dict):
     else:
         pass  # empty or missing file — just the rectangle
 
-    # Annotation (only if a barcode image is placed)
+    # Annotation above the rectangle (only if a barcode image is placed)
     text = annotation_text(label)
     if text and img_path and os.path.isfile(img_path):
         c.setFont("Helvetica", FONT_SIZE)
-        c.drawCentredString(x + rect_w / 2, y - TEXT_OFFSET, text)
+        c.drawCentredString(x + rect_w / 2, y + rect_h + TEXT_OFFSET / 2, text)
 
 
 def build_rows(buckets: dict[int, list[dict]]) -> list[list[dict]]:
@@ -450,7 +750,7 @@ def build_rows(buckets: dict[int, list[dict]]) -> list[list[dict]]:
     return rows
 
 
-def render_pdf(rows: list[list[dict]], output_path: str):
+def render_pdf(rows: list[list[dict]], output_path: str, show_borders: bool = True):
     # A4 portrait: 210mm wide x 297mm tall
     page_w = 210 * mm
     page_h = 297 * mm
@@ -474,17 +774,36 @@ def render_pdf(rows: list[list[dict]], output_path: str):
         c.setFont("Helvetica-Bold", 9)
         for ci, col in enumerate(COLUMNS):
             cx = col_x[ci] + col_widths[ci] / 2
-            c.drawCentredString(cx, y, f"{col['rect_w']/mm:.0f} x {col['rect_h']/mm:.0f} mm")
+            c.drawCentredString(cx, y, f"Col {ci+1}  —  {col['rect_w']/mm:.0f} x {col['rect_h']/mm:.0f} mm")
+        # Horizontal line below the header
+        line_y = y - 3 * mm
+        c.setStrokeColorRGB(0.6, 0.6, 0.6)
+        c.setLineWidth(0.3 * mm)
+        c.line(gap, line_y, page_w - gap, line_y)
+        c.setStrokeColorRGB(0, 0, 0)
 
     cursor_y = page_h - MARGIN_TOP
     need_header = True
+    page_num = 1
+
+    def draw_page_number():
+        c.setFont("Helvetica", 8)
+        c.setFillColorRGB(0.5, 0.5, 0.5)
+        c.drawCentredString(page_w / 2, MARGIN_BOTTOM / 2, f"— {page_num} —")
+        c.setFillColorRGB(0, 0, 0)
+
+    label_above_h = TEXT_OFFSET / 2 + FONT_SIZE  # space for annotation above rect
+    row_num = 0
 
     for row in rows:
+        row_num += 1
         row_h = max(l["rect_h"] for l in row)
-        space_needed = row_h + TEXT_OFFSET + FONT_SIZE
+        space_needed = row_h + label_above_h
 
         if cursor_y - space_needed < MARGIN_BOTTOM:
+            draw_page_number()
             c.showPage()
+            page_num += 1
             cursor_y = page_h - MARGIN_TOP
             need_header = True
 
@@ -493,14 +812,24 @@ def render_pdf(rows: list[list[dict]], output_path: str):
             cursor_y -= 6 * mm
             need_header = False
 
+        # Leave room for annotation text above
+        cursor_y -= label_above_h
+
+        # Row number on the left
+        c.setFont("Helvetica", 7)
+        c.setFillColorRGB(0.5, 0.5, 0.5)
+        c.drawRightString(gap - 2 * mm, cursor_y - row_h / 2 - 3, f"R{row_num}")
+        c.setFillColorRGB(0, 0, 0)
+
         for ci, label in enumerate(row):
             offset = (col_widths[ci] - label["rect_w"]) / 2
-            draw_label(c, col_x[ci] + offset, cursor_y - row_h, label)
+            draw_label(c, col_x[ci] + offset, cursor_y - row_h, label, show_borders)
 
         cursor_y -= row_h + ROW_SPACING
 
+    draw_page_number()
     c.save()
-    print(f"\n  PDF saved: {output_path}")
+    print(f"\n  PDF saved: {output_path} ({page_num} page{'s' if page_num > 1 else ''})")
 
 
 # ---------------------------------------------------------------------------

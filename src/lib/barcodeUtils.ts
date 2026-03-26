@@ -695,7 +695,7 @@ export function getDefaultConfig(): BarcodeConfig {
     dpi: 300,
     height: 100,
     displayValue: true,
-    fontSize: 16,
+    fontSize: 20,
     lineColor: '#000000',
     background: '#FFFFFF',
     margin: 10,
