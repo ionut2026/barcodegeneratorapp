@@ -116,7 +116,7 @@ export interface ValidationCertificate {
    *  B — round-trip ✓, bit-perfect ✓, checksum not invalid, X-dim < 7.5 mils
    *  F — round-trip failed OR data mismatch OR checksum invalid
    */
-  isoGrade: 'A' | 'B' | 'C' | 'D' | 'F';
+  isoGrade: 'A' | 'B' | 'F';
   bitPerfectMatch: boolean;
   roundTripSuccess: boolean;
   /** Configured X-dimension in mils. */
@@ -182,7 +182,7 @@ export function computeISOGrade(
   bitPerfectMatch: boolean,
   checksumStatus: ChecksumValidationResult['status'],
   xDimensionMils: number,
-): 'A' | 'B' | 'C' | 'D' | 'F' {
+): 'A' | 'B' | 'F' {
   if (!roundTripSuccess || !bitPerfectMatch || checksumStatus === 'invalid') return 'F';
   // Any status other than 'invalid' qualifies for A/B — a format that has no checksum
   // should not be penalised just because there is nothing to verify.

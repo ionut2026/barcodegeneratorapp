@@ -41,7 +41,7 @@ export interface ValidationSuiteResult {
   passed: number;
   /** Cases that received grade F. */
   failed: number;
-  /** Cases that received grade C or D (functional but suboptimal). */
+  /** Cases that received grade B (functional but below healthcare X-dimension threshold). */
   warnings: number;
   /** Full certificate array, one entry per test case. */
   certificates: ValidationCertificate[];
@@ -88,7 +88,7 @@ export async function runValidationSuite(
 
   const passed   = certificates.filter((c) => c.isoGrade === 'A' || c.isoGrade === 'B').length;
   const failed   = certificates.filter((c) => c.isoGrade === 'F').length;
-  const warnings = certificates.filter((c) => c.isoGrade === 'C' || c.isoGrade === 'D').length;
+  const warnings = certificates.filter((c) => c.isoGrade === 'B').length;
 
   return {
     total: testCases.length,

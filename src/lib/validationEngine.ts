@@ -199,6 +199,14 @@ const OPTIONAL_REGISTRY: Partial<Record<ChecksumType, OptionalEntry>> = {
   mod10Weight3: { name: 'Mod 10 Weight 3',  compute: calculateMod10Weight3Checksum },
   '7CheckDR':   { name: '7 Check DR',       compute: calculate7CheckDRChecksum },
   mod16Japan:   { name: 'Mod 16 Japan',     compute: calculateMod16JapanChecksum },
+  ean13: {
+    name: 'EAN-13 Mod 10',
+    compute: (body) => String(calculateEAN13Checksum(body)),
+  },
+  upc: {
+    name: 'UPC-A Mod 10',
+    compute: (body) => String(calculateUPCChecksum(body)),
+  },
 };
 
 // ── BarcodeValidator ──────────────────────────────────────────────────────────

@@ -778,3 +778,80 @@ describe('calculateMod16JapanChecksum', () => {
     expect(result).not.toBe('-'); // index 1 = '-' (the old incorrect remainder result)
   });
 });
+
+// TEST-GAP-2: calculateJapanNW7Checksum specific vectors
+describe('calculateJapanNW7Checksum — specific vectors', () => {
+  it('returns "6" for "1234" (indices 1+2+3+4=10, (16-10%16)%16=6 → chars[6]="6")', () => {
+    expect(calculateJapanNW7Checksum('1234')).toBe('6');
+  });
+
+  it('returns "0" for "0" (index 0, sum=0, (16-0)%16=0 → chars[0]="0")', () => {
+    expect(calculateJapanNW7Checksum('0')).toBe('0');
+  });
+
+  it('result is never a start/stop character (A,B,C,D)', () => {
+    const startStops = new Set(['A', 'B', 'C', 'D']);
+    for (const input of ['0', '1', '9999', '1234567890', '-$:/.+']) {
+      expect(startStops.has(calculateJapanNW7Checksum(input))).toBe(false);
+    }
+  });
+});
+
+// TEST-GAP-2: calculateMod16JapanChecksum specific vectors
+describe('calculateMod16JapanChecksum — specific vectors', () => {
+  it('returns "6" for "1234" (1+2+3+4=10, (16-10%16)%16=6 → chars[6]="6")', () => {
+    expect(calculateMod16JapanChecksum('1234')).toBe('6');
+  });
+
+  it('result is always from the first 16 characters (indices 0-15)', () => {
+    const extendedChars = new Set(['A', 'B', 'C', 'D', 'T', 'N', '*', 'E']);
+    for (const input of ['0', '1', '9999', '1234567890']) {
+      expect(extendedChars.has(calculateMod16JapanChecksum(input))).toBe(false);
+    }
+  });
+});
+
+// TEST-GAP-3: calculateMod11AChecksum specific vectors
+describe('calculateMod11AChecksum — specific vectors', () => {
+  it('returns "5" for "12345"', () => {
+    // reversed: [5,4,3,2,1], weights 2..6
+    // sum = 5*2 + 4*3 + 3*4 + 2*5 + 1*6 = 10+12+12+10+6 = 50
+    // remainder = 50 % 11 = 6; check = 11 - 6 = 5
+    expect(calculateMod11AChecksum('12345')).toBe('5');
+  });
+
+  it('returns "X" for "6" (sum=12, 12%11=1, 11-1=10 → X)', () => {
+    expect(calculateMod11AChecksum('6')).toBe('X');
+  });
+
+  it('returns "0" for "0" (sum=0, 0%11=0 → check=0)', () => {
+    expect(calculateMod11AChecksum('0')).toBe('0');
+  });
+});
+
+// TEST-GAP-4: applyChecksum with ean13/upc types
+describe('applyChecksum — ean13/upc types', () => {
+  it('ean13 on 12-digit input appends correct check digit', () => {
+    expect(applyChecksum('590123412345', 'EAN13', 'ean13')).toBe('5901234123457');
+  });
+
+  it('ean13 on 13-digit input returns unchanged (already has check digit)', () => {
+    expect(applyChecksum('5901234123457', 'EAN13', 'ean13')).toBe('5901234123457');
+  });
+
+  it('ean13 on non-12-digit input returns unchanged (length guard)', () => {
+    expect(applyChecksum('12345', 'EAN13', 'ean13')).toBe('12345');
+  });
+
+  it('upc on 11-digit input appends correct check digit', () => {
+    expect(applyChecksum('03600029145', 'UPC', 'upc')).toBe('036000291452');
+  });
+
+  it('upc on 12-digit input returns unchanged (already has check digit)', () => {
+    expect(applyChecksum('036000291452', 'UPC', 'upc')).toBe('036000291452');
+  });
+
+  it('upc on non-11-digit input returns unchanged (length guard)', () => {
+    expect(applyChecksum('12345', 'UPC', 'upc')).toBe('12345');
+  });
+});

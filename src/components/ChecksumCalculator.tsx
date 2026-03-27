@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import {
   calculateMod10,
   calculateMod11,
@@ -140,19 +140,21 @@ export function ChecksumCalculator({ onChecksumData }: ChecksumCalculatorProps) 
     return results;
   };
 
-  const checksums = getChecksums();
+  const checksums = useMemo(() => getChecksums(), [input]);
 
   // Notify parent of input/checksum changes
   useEffect(() => {
     onChecksumData?.(input, checksums);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [input]);
+  }, [input, checksums, onChecksumData]);
 
   const copyValue = (value: string, index: number) => {
-    navigator.clipboard.writeText(value);
-    setCopiedIndex(index);
-    toast.success('Copied to clipboard');
-    setTimeout(() => setCopiedIndex(null), 2000);
+    navigator.clipboard.writeText(value).then(() => {
+      setCopiedIndex(index);
+      toast.success('Copied to clipboard');
+      setTimeout(() => setCopiedIndex(null), 2000);
+    }).catch(() => {
+      toast.error('Failed to copy to clipboard');
+    });
   };
 
   return (

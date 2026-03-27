@@ -16,6 +16,32 @@ type: project
 - runValidationSuite (validationRunner.ts) → batch runner over TestCase[]
 - BarcodePreview auto-certifies 600ms after config change when certEnabled toggle is on
 
+## Known Recurring Patterns / Issues Found in Full Review (2026-07-10 comprehensive re-audit)
+
+### NEW REQUIRED FINDINGS (2026-07-10)
+- ChecksumCalculator.tsx line 152: navigator.clipboard.writeText() — Promise NOT awaited; rejection silently swallowed. Unhandled permission-denied scenario shows success toast.
+- BatchGenerator.tsx lines 260,305: `height` parameter missing from generateBarcodeBlob (ZIP) and generateBarcodeImage (PDF) export calls — both default to height=100 ignoring user setting.
+- BatchGenerator.tsx lines 318-319: exportAsPDF uses pdfImages[0].widthMm/heightMm for ALL images — mixed-format batches lay out with wrong cell dimensions.
+- BatchGenerator.tsx line 363: useEffect for onActionsReady missing downloadAsZip and exportAsPDF deps — stale closures passed to parent.
+- validationService.ts computeISOGrade + validationRunner.ts: grades C/D never returned by computeISOGrade (function only returns A, B, F) but validationRunner.ts filters for them — warnings count is permanently 0; dead infrastructure.
+- barcodeUtils.ts ChecksumType: 'ean13' and 'upc' in the union type have no OPTIONAL_REGISTRY entry in validationEngine — if used in optional checksum path, validator silently returns 'skipped' and reports isValid:true with no actual verification.
+- BarcodePreview.tsx printBarcode 1D path: img.onerror handler missing — blob URL leaked, no toast, print dialog never opens on SVG load failure.
+
+### NEW SUGGESTIONS / CLEANUPS (2026-07-10)
+- computeITF14Check in validationEngine.ts duplicates calculateGS1Mod10 (already imported). calculateEAN8Check is a 3rd copy (also in barcodeAnalyzer.ts). Both should use the exported utility from barcodeUtils.ts.
+- barcodeUtils.ts line 338: comment on calculateMod10 says "Standard Luhn" but it's a variant that doubles from position 1 (rightmost), not position 2 like credit-card Luhn (calculateLuhnChecksum). Both are correct for their use cases but the comment is misleading.
+- barcodeUtils.ts: calculateCode39Checksum (line 399) is dead code — just delegates to calculateMod43Checksum, never called externally.
+- BatchGenerator generateRandomForFormat: UPCE not handled as a special case → generates alphanumeric values, always invalid for UPCE (requires 6 pure digits).
+- BatchPreview.test.tsx: mock BarcodeImageResult has a 'format' field that doesn't exist on the interface (excess property); also duplicates barcodeImageGenerator.test.ts coverage of injectPngDpi with weaker assertions.
+- barcodeUtils.ts codabar validator: regex allows unpaired start/stop (e.g., '1234A' passes) — may create round-trip mismatch if JsBarcode adds a missing start char.
+- validationEngine.test.ts cfg() helper uses `checksumType = 'none' as any` — should be typed as ChecksumType.
+- barcodeUtils.test.ts calculateMod10 test description says "returns 0 for '79927398713'" but asserts calculateMod10('7992739871') === 3 — description is wrong.
+- BarcodePreview getBwipFormat() is identity function — remove it, use format string directly.
+- BarcodePreview useEffect deps: config.scale listed redundantly alongside config in both 1D and 2D effects.
+- ChecksumCalculator getChecksums(): should be wrapped in useMemo([input]); calculateMod11 is called 4x per render (cache result).
+- batchIdCounter in BatchGenerator is module-level mutable state — should be useRef.
+- BatchGenerator isNumericOnly list includes 'CODE128C' which is not a valid BarcodeFormat — dead string.
+
 ## Known Recurring Patterns / Issues Found in Full Review (2026-03-24)
 
 ### CRITICAL

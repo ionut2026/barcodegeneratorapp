@@ -6,7 +6,9 @@ Run: python barcode_pdf_gen.py
 """
 
 import glob
+import json
 import os
+import shlex
 import sys
 import time
 from PIL import Image
@@ -73,7 +75,7 @@ def _verify_mod16(data: str) -> bool:
         return False
     body, check = data[:-1], data[-1]
     total = sum(CODABAR_CHARS.find(c) for c in body if CODABAR_CHARS.find(c) >= 0)
-    return CODABAR_CHARS[total % 16] == check
+    return CODABAR_CHARS[(16 - total % 16) % 16] == check
 
 
 def _verify_japan_nw7(data: str) -> bool:
@@ -181,7 +183,7 @@ def _verify_mod16_japan(data: str) -> bool:
         return False
     body, check = data[:-1].upper(), data[-1].upper()
     total = sum(CODABAR_MOD16_JAPAN_CHARS.find(c) for c in body if CODABAR_MOD16_JAPAN_CHARS.find(c) >= 0)
-    return CODABAR_MOD16_JAPAN_CHARS[total % 16] == check
+    return CODABAR_MOD16_JAPAN_CHARS[(16 - total % 16) % 16] == check
 
 
 # ── Numeric formats ──
@@ -463,6 +465,9 @@ def show_help():
     print("""
   Commands:
     generate                       Generate the PDF now
+    save                           Save layout to layout.json
+    importpdf                      Reconstruct layout from existing label_sheet.pdf
+    fixlabel <old> <new>           Replace annotation text directly in the PDF
     borders                        Toggle rectangle borders on/off
     auto                           Auto-assign all images to best-fit columns
     rescan                         Re-scan folder for new/removed images
@@ -490,6 +495,188 @@ def resolve_file(name: str) -> str | None:
     return None
 
 
+def fix_pdf_label(old_text: str, new_text: str) -> int:
+    """Replace annotation text in label_sheet.pdf. Returns number of replacements made."""
+    pdf_path = os.path.join(SCRIPT_DIR, "label_sheet.pdf")
+    if not os.path.isfile(pdf_path):
+        print("  label_sheet.pdf not found.")
+        return 0
+    try:
+        import fitz
+    except ImportError:
+        print("  pymupdf is required. Run: pip install pymupdf")
+        return -1
+
+    doc = fitz.open(pdf_path)
+    count = 0
+    for page in doc:
+        rects = page.search_for(old_text)
+        if not rects:
+            continue
+        for rect in rects:
+            # White out the old label
+            page.draw_rect(rect, color=None, fill=(1, 1, 1))
+            # Re-insert new text, centred over the same area
+            tw = fitz.get_text_length(new_text, fontname="helv", fontsize=FONT_SIZE)
+            cx = (rect.x0 + rect.x1) / 2
+            page.insert_text(
+                fitz.Point(cx - tw / 2, rect.y1),
+                new_text,
+                fontsize=FONT_SIZE,
+                fontname="helv",
+                color=(0, 0, 0),
+            )
+            count += 1
+    if count > 0:
+        tmp_path = pdf_path + ".tmp"
+        doc.save(tmp_path)
+        doc.close()
+        os.replace(tmp_path, pdf_path)
+        print(f"  Replaced {count} instance(s): '{old_text}' → '{new_text}'.")
+    else:
+        print(f"  Text not found in PDF: '{old_text}'")
+        doc.close()
+    return count
+
+
+LAYOUT_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "layout.json")
+
+
+def _img_fingerprint(img) -> bytes:
+    """8×8 grayscale thumbnail — fast visual fingerprint."""
+    try:
+        resample = Image.LANCZOS
+    except AttributeError:
+        resample = Image.ANTIALIAS
+    return img.convert("L").resize((8, 8), resample).tobytes()
+
+
+def import_layout_from_pdf() -> dict[int, list[dict]] | None:
+    """Reconstruct bucket layout by reading image positions from label_sheet.pdf."""
+    pdf_path = os.path.join(SCRIPT_DIR, "label_sheet.pdf")
+    if not os.path.isfile(pdf_path):
+        print(f"  label_sheet.pdf not found in {SCRIPT_DIR}.")
+        return None
+    try:
+        import fitz
+    except ImportError:
+        print("  pymupdf is required. Run: pip install pymupdf")
+        return None
+
+    from io import BytesIO
+
+    all_pngs = find_all_pngs()
+    if not all_pngs:
+        print("  No PNG files found.")
+        return None
+
+    # Pre-compute fingerprints for every PNG in the folder
+    png_fps: dict[str, bytes] = {}
+    for fp in all_pngs:
+        try:
+            with Image.open(fp) as img:
+                png_fps[fp] = _img_fingerprint(img)
+        except Exception:
+            pass
+
+    def best_match(img_bytes: bytes) -> str | None:
+        try:
+            img = Image.open(BytesIO(img_bytes))
+            fp = _img_fingerprint(img)
+            best_path, best_dist = None, float("inf")
+            for png_path, ref in png_fps.items():
+                dist = sum(abs(int(a) - int(b)) for a, b in zip(fp, ref))
+                if dist < best_dist:
+                    best_dist, best_path = dist, png_path
+            return best_path if best_dist < 2000 else None
+        except Exception:
+            return None
+
+    # Column centres in PDF points
+    pts_per_mm = 72 / 25.4
+    col_widths_pts = [col["rect_w"] / mm * pts_per_mm for col in COLUMNS]
+    total_w_pts = sum(col_widths_pts)
+    gap_pts = (210 * pts_per_mm - total_w_pts) / (COLS_PER_ROW + 1)
+    col_centers: list[float] = []
+    x = gap_pts
+    for w in col_widths_pts:
+        col_centers.append(x + w / 2)
+        x += w + gap_pts
+
+    def get_col(x0: float, x1: float) -> int:
+        cx = (x0 + x1) / 2
+        return min(range(COLS_PER_ROW), key=lambda ci: abs(cx - col_centers[ci]))
+
+    col_entries: dict[int, list[tuple]] = {i: [] for i in range(COLS_PER_ROW)}
+    used: set[str] = set()
+
+    doc = fitz.open(pdf_path)
+    for page_num, page in enumerate(doc):
+        for img_ref in page.get_images(full=True):
+            xref = img_ref[0]
+            rects = page.get_image_rects(xref)
+            if not rects:
+                continue
+            rect = rects[0]
+            img_dict = doc.extract_image(xref)
+            png_path = best_match(img_dict["image"])
+            if not png_path or png_path in used:
+                continue
+            used.add(png_path)
+            ci = get_col(rect.x0, rect.x1)
+            sort_key = page_num * 100000 + rect.y0
+            col_entries[ci].append((sort_key, png_path))
+    doc.close()
+
+    buckets: dict[int, list[dict]] = {i: [] for i in range(COLS_PER_ROW)}
+    total = 0
+    for ci in range(COLS_PER_ROW):
+        col_entries[ci].sort(key=lambda e: e[0])
+        for _, png_path in col_entries[ci]:
+            buckets[ci].append(make_label(png_path, ci))
+            total += 1
+
+    if total == 0:
+        print("  Could not match any images — PDF may use a different image format.")
+        return None
+
+    print(f"  Imported {total} image(s) from PDF.")
+    return buckets
+
+
+def save_layout(buckets: dict[int, list[dict]]):
+    """Persist the current bucket layout to layout.json (image paths only)."""
+    data = {}
+    for ci, labels in buckets.items():
+        data[str(ci)] = [l["image"] for l in labels]
+    with open(LAYOUT_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+    print(f"  Layout saved to {os.path.basename(LAYOUT_FILE)}.")
+
+
+def load_layout() -> dict[int, list[dict]] | None:
+    """Load a previously saved layout from layout.json. Returns None if not found."""
+    if not os.path.isfile(LAYOUT_FILE):
+        return None
+    try:
+        with open(LAYOUT_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        buckets = {i: [] for i in range(COLS_PER_ROW)}
+        for ci_str, paths in data.items():
+            ci = int(ci_str)
+            if ci not in buckets:
+                continue
+            for img_path in paths:
+                if img_path and os.path.isfile(img_path):
+                    buckets[ci].append(make_label(img_path, ci))
+                else:
+                    buckets[ci].append(empty_label(ci))
+        return buckets
+    except Exception as e:
+        print(f"  Warning: could not load layout.json ({e}). Starting fresh.")
+        return None
+
+
 def interactive_edit(buckets: dict[int, list[dict]]) -> dict[int, list[dict]] | None:
     show_borders = True
     show_layout(buckets)
@@ -512,9 +699,22 @@ def interactive_edit(buckets: dict[int, list[dict]]) -> dict[int, list[dict]] | 
             try:
                 rows = build_rows(buckets)
                 render_pdf(rows, output_path, show_borders)
+                save_layout(buckets)
                 print("  You can keep editing and type 'generate' again to update.\n")
             except PermissionError:
                 print("  ERROR: Cannot write PDF — close it in your viewer first!")
+            continue
+
+        if action == "importpdf":
+            result = import_layout_from_pdf()
+            if result is not None:
+                buckets = result
+                show_layout(buckets)
+                print("  Type 'save' to persist this layout, or 'generate' to rebuild the PDF.\n")
+            continue
+
+        if action == "save":
+            save_layout(buckets)
             continue
 
         if action == "borders":
@@ -696,6 +896,18 @@ def interactive_edit(buckets: dict[int, list[dict]]) -> dict[int, list[dict]] | 
             show_layout(buckets)
             continue
 
+        if action == "fixlabel":
+            try:
+                argv = shlex.split(cmd)[1:]
+            except ValueError:
+                argv = parts[1:]
+            if len(argv) != 2:
+                print("  Usage: fixlabel \"<old text>\" \"<new text>\"")
+                print("  Example: fixlabel \"CODABAR + Japan NW-7\" \"CODABAR + Mod 16\"")
+                continue
+            fix_pdf_label(argv[0], argv[1])
+            continue
+
         print("  Unknown command. Type 'help' for options.")
 
 
@@ -848,6 +1060,12 @@ def main():
     print(f"Found {len(all_pngs)} image(s). Type 'auto' to assign, 'help' for commands.\n")
 
     buckets = {i: [] for i in range(COLS_PER_ROW)}
+    saved = load_layout()
+    if saved is not None:
+        buckets = saved
+        total = sum(len(b) for b in buckets.values())
+        print(f"  Loaded saved layout ({total} image(s) placed). Type 'generate' to rebuild the PDF.\n")
+        show_layout(buckets)
     interactive_edit(buckets)
 
 

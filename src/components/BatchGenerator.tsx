@@ -23,8 +23,6 @@ interface CommittedBatch {
   images: BarcodeImageResult[];
 }
 
-let batchIdCounter = 0;
-
 export interface BatchActions {
   downloadAsZip: () => Promise<void>;
   exportAsPDF: () => Promise<void>;
@@ -63,7 +61,7 @@ function generateRandomString(length: number, numeric: boolean): string {
 }
 
 function generateRandomForFormat(format: BarcodeFormat, count: number, stringLength: number): string[] {
-  const isNumericOnly = ['EAN13', 'EAN8', 'UPC', 'ITF14', 'ITF', 'CODE128C', 'MSI', 'MSI10', 'MSI11', 'pharmacode', 'codabar'].includes(format);
+  const isNumericOnly = ['EAN13', 'EAN8', 'UPC', 'UPCE', 'ITF14', 'ITF', 'MSI', 'MSI10', 'MSI11', 'pharmacode', 'codabar'].includes(format);
 
   let length = stringLength;
   if (format === 'EAN13') length = 12;
@@ -199,7 +197,7 @@ export function BatchGenerator({ onImagesGenerated, onActionsReady }: BatchGener
       const skipped = valueList.length - images.length;
 
       const batch: CommittedBatch = {
-        id: `batch-${++batchIdCounter}`,
+        id: crypto.randomUUID(),
         format,
         checksumType,
         formatLabel: fmtLabel,
@@ -246,7 +244,7 @@ export function BatchGenerator({ onImagesGenerated, onActionsReady }: BatchGener
       const zip = new JSZip();
       const multiFormat = batches.length > 1;
 
-      let totalItems = batches.reduce((sum, b) => sum + b.values.length, 0);
+      const totalItems = batches.reduce((sum, b) => sum + b.values.length, 0);
       let processed = 0;
 
       for (const batch of batches) {
@@ -257,7 +255,7 @@ export function BatchGenerator({ onImagesGenerated, onActionsReady }: BatchGener
 
         for (const val of batch.values) {
           const processedVal = applyChecksum(val, batch.format, batch.checksumType);
-          const blob = await generateBarcodeBlob(processedVal, batch.format, scale, 0, widthMils, dpi);
+          const blob = await generateBarcodeBlob(processedVal, batch.format, scale, 0, widthMils, dpi, height);
           if (blob) folder.file(`${val}.png`, blob);
           processed++;
           setProgress((processed / totalItems) * 100);
@@ -292,7 +290,7 @@ export function BatchGenerator({ onImagesGenerated, onActionsReady }: BatchGener
       const { jsPDF } = await import('jspdf');
       // Re-generate for PDF (margin=0 for tighter layout)
       const pdfImages: { dataUrl: string; width: number; height: number; value: string; widthMm: number; heightMm: number; label: string }[] = [];
-      let totalItems = batches.reduce((sum, b) => sum + b.values.length, 0);
+      const totalItems = batches.reduce((sum, b) => sum + b.values.length, 0);
       let processed = 0;
 
       for (const batch of batches) {
@@ -302,7 +300,7 @@ export function BatchGenerator({ onImagesGenerated, onActionsReady }: BatchGener
 
         for (const val of batch.values) {
           const processedVal = applyChecksum(val, batch.format, batch.checksumType);
-          const result = await generateBarcodeImage(processedVal, batch.format, scale, 0, widthMils, dpi);
+          const result = await generateBarcodeImage(processedVal, batch.format, scale, 0, widthMils, dpi, height);
           if (result) pdfImages.push({ ...result, label });
           processed++;
           setProgress((processed / totalItems) * 100);
@@ -333,15 +331,17 @@ export function BatchGenerator({ onImagesGenerated, onActionsReady }: BatchGener
         }
         const col = i % cols;
         x = pdfMargin + col * (cellW + gap);
-        pdf.addImage(img.dataUrl, 'PNG', x, y, cellW, imgHmm * scaleRatio);
+        const itemScaleRatio = cellW / img.widthMm;
+        const itemHmm = img.heightMm * itemScaleRatio;
+        pdf.addImage(img.dataUrl, 'PNG', x, y, cellW, itemHmm);
         pdf.setFontSize(7);
         pdf.setFont('courier');
-        pdf.text(img.value, x + cellW / 2, y + imgHmm * scaleRatio + 3, { align: 'center' });
+        pdf.text(img.value, x + cellW / 2, y + itemHmm + 3, { align: 'center' });
         pdf.setFontSize(5);
         pdf.setTextColor(120);
-        pdf.text(img.label, x + cellW / 2, y + imgHmm * scaleRatio + 6, { align: 'center' });
+        pdf.text(img.label, x + cellW / 2, y + itemHmm + 6, { align: 'center' });
         pdf.setTextColor(0);
-        if (col === cols - 1) y += cellH + rowGap;
+        if (col === cols - 1) y += itemHmm + labelH + rowGap;
       });
 
       const today = new Date().toISOString().split('T')[0];
@@ -360,7 +360,7 @@ export function BatchGenerator({ onImagesGenerated, onActionsReady }: BatchGener
 
   useEffect(() => {
     onActionsReady?.({ downloadAsZip, exportAsPDF, isDisabled, isGenerating });
-  }, [isDisabled, isGenerating, batches, scale, widthMils, dpi]);
+  }, [downloadAsZip, exportAsPDF, isDisabled, isGenerating]);
 
   const totalImages = batches.reduce((sum, b) => sum + b.images.length, 0);
 

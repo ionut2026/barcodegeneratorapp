@@ -106,7 +106,8 @@ async function render1DToCanvas(
 
   const svgData = new XMLSerializer().serializeToString(svg);
   const canvas = document.createElement('canvas');
-  const ctx = canvas.getContext('2d')!;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('Failed to get 2D canvas rendering context');
   const img = new Image();
 
   await new Promise<void>((resolve, reject) => {
@@ -118,7 +119,10 @@ async function render1DToCanvas(
       resolve();
     };
     img.onerror = reject;
-    img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgData)));
+    const svgBytes = new TextEncoder().encode(svgData);
+    let binary = '';
+    svgBytes.forEach((b) => { binary += String.fromCharCode(b); });
+    img.src = 'data:image/svg+xml;base64,' + btoa(binary);
   });
 
   const result = {

@@ -51,16 +51,6 @@ function snapSvgToPixels(svg: SVGSVGElement): void {
   });
 }
 
-// Map our format names to bwip-js format names
-function getBwipFormat(format: string): string {
-  const formatMap: Record<string, string> = {
-    'qrcode': 'qrcode',
-    'azteccode': 'azteccode',
-    'datamatrix': 'datamatrix',
-    'pdf417': 'pdf417',
-  };
-  return formatMap[format] || format;
-}
 
 export function BarcodePreview({ config, effects = defaultEffects, isValid, errorMessage }: BarcodePreviewProps) {
   const svgRef = useRef<SVGSVGElement>(null);
@@ -144,7 +134,7 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
 
     try {
       const bwipOptions: Record<string, unknown> = {
-        bcid: getBwipFormat(config.format),
+        bcid: config.format,
         text: barcodeText,
          scale: Math.max(1, Math.round(effectiveWidth * config.scale)),
         includetext: config.displayValue,
@@ -280,7 +270,7 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
       try {
         const tempCanvas = document.createElement('canvas');
         const bwipOptions: Record<string, unknown> = {
-          bcid: getBwipFormat(config.format),
+          bcid: config.format,
           text: barcodeText,
           scale: modulePixels,
           includetext: config.displayValue,
@@ -557,7 +547,7 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
       const tempCanvas = document.createElement('canvas');
       try {
         const bwipOptions: Record<string, unknown> = {
-          bcid: getBwipFormat(config.format),
+          bcid: config.format,
           text: barcodeText,
           scale: modulePixels,
           includetext: config.displayValue,
@@ -573,6 +563,8 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
         }
         bwipjs.toCanvas(tempCanvas, bwipOptions as unknown as Parameters<typeof bwipjs.toCanvas>[1]);
         dispatchPrint(tempCanvas.toDataURL('image/png'), tempCanvas.width, tempCanvas.height);
+        tempCanvas.width = 0;
+        tempCanvas.height = 0;
       } catch (error) {
         console.error('Print 2D barcode error:', error);
       }
@@ -604,6 +596,10 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
           ctx.drawImage(img, 0, 0);
           URL.revokeObjectURL(url);
           dispatchPrint(canvas.toDataURL('image/png'), canvas.width, canvas.height);
+        };
+        img.onerror = () => {
+          URL.revokeObjectURL(url);
+          toast.error('Failed to render barcode for printing');
         };
         img.src = url;
       } catch (error) {

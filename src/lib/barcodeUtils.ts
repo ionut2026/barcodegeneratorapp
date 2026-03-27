@@ -283,6 +283,22 @@ export const BARCODE_FORMATS: { value: BarcodeFormat; label: string; description
     lengthHint: 'Any length',
     category: '1D'
   },
+  {
+    value: 'MSI1010' as const,
+    label: 'MSI Double Mod 10',
+    description: 'MSI with two Mod 10 check digits',
+    validChars: '0-9 only',
+    lengthHint: 'Any length',
+    category: '1D' as const,
+  },
+  {
+    value: 'MSI1110' as const,
+    label: 'MSI Mod 11 + Mod 10',
+    description: 'MSI with Mod 11 followed by Mod 10 check digits',
+    validChars: '0-9 only',
+    lengthHint: 'Any length',
+    category: '1D' as const,
+  },
   { 
     value: 'pharmacode', 
     label: 'Pharmacode', 
