@@ -60,9 +60,6 @@ export function ChecksumPreview({ variants, inputValue, widthMils = 7.5, dpi = 3
     [variants]
   );
 
-  const escapeForJsString = (s: string): string =>
-    s.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\r/g, '\\r').replace(/\n/g, '\\n');
-
   const escapeHtml = (s: string): string =>
     s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
@@ -72,42 +69,91 @@ export function ChecksumPreview({ variants, inputValue, widthMils = 7.5, dpi = 3
   const printChecksums = useCallback(() => {
     if (applicable.length === 0) return;
 
+    // Pre-render each barcode SVG using the bundled JsBarcode (no CDN dependency)
+    // and stamp physical mm dimensions on each SVG — same approach as BarcodePreview.tsx.
+    type RenderedCard = { name: string; fullValue: string; svgContent: string; widthMm: number; heightMm: number };
+    const renderedCards: RenderedCard[] = [];
+
+    for (const v of applicable) {
+      const tempSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      try {
+        JsBarcode(tempSvg, v.fullValue, {
+          format: 'CODE128',
+          width: modulePixels,
+          height: 60,
+          displayValue: false,
+          margin: 5,
+          lineColor: '#000000',
+          background: '#ffffff',
+        });
+        const svgWidthPx = parseFloat(tempSvg.getAttribute('width') || '0');
+        const svgHeightPx = parseFloat(tempSvg.getAttribute('height') || '0');
+        if (!svgWidthPx || !svgHeightPx) continue;
+
+        const wMm = +(svgWidthPx * 25.4 / dpi).toFixed(2);
+        const hMm = +(svgHeightPx * 25.4 / dpi).toFixed(2);
+        tempSvg.setAttribute('viewBox', `0 0 ${svgWidthPx} ${svgHeightPx}`);
+        tempSvg.setAttribute('width', `${wMm}mm`);
+        tempSvg.setAttribute('height', `${hMm}mm`);
+
+        renderedCards.push({
+          name: v.name,
+          fullValue: v.fullValue,
+          svgContent: new XMLSerializer().serializeToString(tempSvg),
+          widthMm: wMm,
+          heightMm: hMm,
+        });
+      } catch {
+        // skip barcodes that fail to render
+      }
+    }
+
+    if (renderedCards.length === 0) {
+      toast.error('Failed to render barcodes for print.');
+      return;
+    }
+
     const printWindow = window.open('', '', 'width=800,height=600');
     if (!printWindow) { toast.error('Pop-up blocked. Please allow pop-ups.'); return; }
 
-    const barW = modulePixels;
-
-    // Build SVG barcodes in the print window
-    const cards = applicable.map(v => `
+    const cards = renderedCards.map(c => `
       <div class="cell">
-        <p class="label">${escapeHtml(v.name)}</p>
-        <svg id="bc-${v.name.replace(/[^a-zA-Z0-9]/g, '_')}"></svg>
-        <span class="value">${escapeHtml(v.fullValue)}</span>
+        <p class="label">${escapeHtml(c.name)}</p>
+        <div class="barcode">${c.svgContent}</div>
+        <span class="value">${escapeHtml(c.fullValue)}</span>
+        <span class="dims">${c.widthMm} &times; ${c.heightMm} mm</span>
       </div>
     `).join('');
 
     printWindow.document.write(`<!DOCTYPE html><html><head><title>Checksum Barcodes</title>
-      <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3/dist/JsBarcode.all.min.js"><\/script>
       <style>
+        @page { size: auto; margin: 10mm; }
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: monospace; padding: 15mm; }
+        body { font-family: monospace; padding: 15mm; background: white; }
         .grid { display: flex; flex-wrap: wrap; gap: 20px; justify-content: center; }
         .cell { display: flex; flex-direction: column; align-items: center; break-inside: avoid; padding: 10px; border: 1px solid #eee; border-radius: 8px; }
         .label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; color: #666; margin-bottom: 6px; }
-        .cell svg { height: auto; }
+        .barcode { display: flex; justify-content: center; }
+        .barcode svg { display: block; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
         .value { margin-top: 6px; font-size: 13px; font-family: 'Courier New', monospace; color: #000; font-weight: 600; letter-spacing: 0.05em; }
-        @media print { body { padding: 10mm; } .cell { break-inside: avoid; } }
-      </style></head><body><div class="grid">${cards}</div>
-      <script>
-        window.addEventListener('afterprint', function() { window.close(); });
-        ${applicable.map(v => {
-          const id = `bc-${v.name.replace(/[^a-zA-Z0-9]/g, '_')}`;
-          return `try { JsBarcode("#${id}", "${escapeForJsString(v.fullValue)}", { format: "CODE128", width: ${barW}, height: 60, displayValue: false, margin: 5 }); } catch(e) {}`;
-        }).join('\n')}
-        setTimeout(function() { window.print(); }, 200);
-      <\/script></body></html>`);
+        .dims { margin-top: 3px; font-size: 10px; color: #888; font-family: monospace; }
+        .print-note { text-align: center; font-size: 9pt; color: #888; margin-top: 15mm; font-family: monospace; }
+        @media print { .print-note { display: none; } .cell { break-inside: avoid; } }
+      </style></head>
+      <body>
+        <div class="grid">${cards}</div>
+        <p class="print-note">Print at 100% scale (no fit-to-page) for accurate physical dimensions</p>
+      </body></html>`);
     printWindow.document.close();
-  }, [applicable, modulePixels]);
+
+    printWindow.onload = () => {
+      setTimeout(() => {
+        printWindow.focus();
+        printWindow.addEventListener('afterprint', () => printWindow.close());
+        printWindow.print();
+      }, 200);
+    };
+  }, [applicable, modulePixels, dpi]);
 
   if (!inputValue.trim()) {
     return (
