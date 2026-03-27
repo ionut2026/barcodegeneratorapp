@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { BarcodeFormat, BARCODE_FORMATS, ChecksumType, getApplicableChecksums, applyChecksum, snapToPixelGrid, getDefaultConfig } from '@/lib/barcodeUtils';
-import { generateBarcodeImage, generateBarcodeBlob, BarcodeImageResult } from '@/lib/barcodeImageGenerator';
+import { BarcodeFormat, BARCODE_FORMATS, ChecksumType, getApplicableChecksums, applyChecksum, snapToPixelGrid, getDefaultConfig, is2DBarcode } from '@/lib/barcodeUtils';
+import { generateBarcodeImage, generateBarcodeBlob, generateBarcodeSVGBlob, BarcodeImageResult } from '@/lib/barcodeImageGenerator';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -255,8 +255,15 @@ export function BatchGenerator({ onImagesGenerated, onActionsReady }: BatchGener
 
         for (const val of batch.values) {
           const processedVal = applyChecksum(val, batch.format, batch.checksumType);
-          const blob = await generateBarcodeBlob(processedVal, batch.format, scale, 0, widthMils, dpi, height);
-          if (blob) folder.file(`${val}.png`, blob);
+          // 1D barcodes: export as SVG (vector, physical mm dimensions embedded).
+          // 2D barcodes: export as PNG (bwip-js renders to canvas, no SVG output).
+          if (!is2DBarcode(batch.format)) {
+            const svgBlob = generateBarcodeSVGBlob(processedVal, batch.format, widthMils, dpi, height, 0);
+            if (svgBlob) folder.file(`${val}.svg`, svgBlob);
+          } else {
+            const blob = await generateBarcodeBlob(processedVal, batch.format, scale, 0, widthMils, dpi, height);
+            if (blob) folder.file(`${val}.png`, blob);
+          }
           processed++;
           setProgress((processed / totalItems) * 100);
         }

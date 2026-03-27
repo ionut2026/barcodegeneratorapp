@@ -219,6 +219,95 @@ export async function generateBarcodeImage(
 }
 
 /**
+ * Generate a 1D barcode as an SVG string with physical dimensions embedded.
+ *
+ * The returned SVG has `width` and `height` set in mm (derived from widthMils
+ * and dpi), plus a `viewBox` so the SVG scales correctly in any viewer or
+ * print context.  2D formats are not supported — use generateBarcodeImage for
+ * those.
+ *
+ * @param value     Barcode payload (pre-checksum).
+ * @param format    1D barcode symbology (pass a 2D format and null is returned).
+ * @param widthMils X-dimension in mils (default 7.5 — GS1 healthcare minimum).
+ * @param dpi       Target print DPI used to compute physical mm size (default 300).
+ * @param height    Bar height in pixels at base DPI (default 100).
+ * @param margin    Quiet-zone margin in pixels (default 10).
+ * @param displayValue Whether to render the human-readable text below the bars.
+ * @param fontSize  Font size for displayValue text (default 12).
+ * @param lineColor Bar colour hex string (default '#000000').
+ * @param background Background colour hex string (default '#FFFFFF').
+ */
+export function generateBarcodeSVGString(
+  value: string,
+  format: BarcodeFormat,
+  widthMils = 7.5,
+  dpi = 300,
+  height = 100,
+  margin = 10,
+  displayValue = false,
+  fontSize = 12,
+  lineColor = '#000000',
+  background = '#FFFFFF',
+): { svgString: string; widthMm: number; heightMm: number } | null {
+  if (is2DBarcode(format)) return null;
+  const validation = validateInput(value, format);
+  if (!validation.valid) return null;
+
+  const renderValue = normalizeForRendering(value, format);
+  const modulePixels = Math.max(1, Math.round(widthMils * dpi / 1000));
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+
+  try {
+    JsBarcode(svg, renderValue, {
+      format,
+      width: modulePixels,
+      height,
+      displayValue,
+      fontSize,
+      lineColor,
+      background,
+      margin,
+      font: 'monospace',
+      textMargin: 2,
+    });
+  } catch (e) {
+    console.warn(`generateBarcodeSVGString: failed to render ${format} "${value}"`, e);
+    return null;
+  }
+
+  const svgWidthPx = parseFloat(svg.getAttribute('width') || '0');
+  const svgHeightPx = parseFloat(svg.getAttribute('height') || '0');
+  if (!svgWidthPx || !svgHeightPx) return null;
+
+  const widthMm = +(svgWidthPx * 25.4 / dpi).toFixed(2);
+  const heightMm = +(svgHeightPx * 25.4 / dpi).toFixed(2);
+
+  // Embed physical dimensions so any viewer/printer renders at correct real-world size.
+  svg.setAttribute('viewBox', `0 0 ${svgWidthPx} ${svgHeightPx}`);
+  svg.setAttribute('width', `${widthMm}mm`);
+  svg.setAttribute('height', `${heightMm}mm`);
+
+  return { svgString: new XMLSerializer().serializeToString(svg), widthMm, heightMm };
+}
+
+/**
+ * Generate a 1D barcode as an SVG Blob (for ZIP packaging).
+ * Wraps generateBarcodeSVGString — synchronous, no canvas required.
+ */
+export function generateBarcodeSVGBlob(
+  value: string,
+  format: BarcodeFormat,
+  widthMils = 7.5,
+  dpi = 300,
+  height = 100,
+  margin = 10,
+): Blob | null {
+  const result = generateBarcodeSVGString(value, format, widthMils, dpi, height, margin);
+  if (!result) return null;
+  return new Blob([result.svgString], { type: 'image/svg+xml;charset=utf-8' });
+}
+
+/**
  * Generate a barcode as a Blob (for ZIP packaging).
  * Converts the DPI-tagged data URL from generateBarcodeImage() directly to a
  * Blob, preserving the pHYs metadata (the previous canvas roundtrip stripped it).

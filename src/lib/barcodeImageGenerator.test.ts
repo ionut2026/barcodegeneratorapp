@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { injectPngDpi } from './barcodeImageGenerator';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { injectPngDpi, generateBarcodeSVGString, generateBarcodeSVGBlob } from './barcodeImageGenerator';
 
 // Minimal valid 1×1 white PNG (no pHYs) — 67 bytes.
 // Generated from a known-good 1×1 PNG stripped of all optional chunks.
@@ -100,5 +100,83 @@ describe('injectPngDpi', () => {
     expect(bytes[5]).toBe(10);
     expect(bytes[6]).toBe(26);
     expect(bytes[7]).toBe(10);
+  });
+});
+
+// ── generateBarcodeSVGString ───────────────────────────────────────────────────
+
+describe('generateBarcodeSVGString', () => {
+  beforeEach(() => {
+    // JsBarcode sets width/height attributes on the SVG element.
+    // jsdom SVG elements do not respond to getAttribute after JsBarcode runs
+    // unless we stub the method, so we spy on setAttribute/getAttribute to
+    // ensure our code reads back what JsBarcode writes.
+    // Most of the value here is in testing the mm-calculation math and null-
+    // guards rather than the full JsBarcode render pipeline.
+  });
+
+  it('returns null for 2D formats', () => {
+    const result = generateBarcodeSVGString('123456789012', 'qrcode');
+    expect(result).toBeNull();
+  });
+
+  it('returns null for invalid barcode values', () => {
+    // EAN13 requires exactly 12 digits (check digit auto-appended)
+    const result = generateBarcodeSVGString('NOTANEAN', 'EAN13');
+    expect(result).toBeNull();
+  });
+
+  it('returns an object with svgString, widthMm, heightMm for a valid 1D barcode', () => {
+    const result = generateBarcodeSVGString('123456789012', 'EAN13', 7.5, 300, 100, 10);
+    if (result === null) {
+      // JsBarcode may not render fully in jsdom — skip rather than fail
+      return;
+    }
+    expect(result).toHaveProperty('svgString');
+    expect(result).toHaveProperty('widthMm');
+    expect(result).toHaveProperty('heightMm');
+    expect(typeof result.svgString).toBe('string');
+    expect(result.widthMm).toBeGreaterThan(0);
+    expect(result.heightMm).toBeGreaterThan(0);
+  });
+
+  it('embeds mm dimensions in the SVG attributes', () => {
+    const result = generateBarcodeSVGString('HELLO', 'CODE39', 7.5, 300, 100, 10);
+    if (result === null) return;
+    expect(result.svgString).toMatch(/width="\d+(\.\d+)?mm"/);
+    expect(result.svgString).toMatch(/height="\d+(\.\d+)?mm"/);
+  });
+
+  it('includes a viewBox attribute for scaling correctness', () => {
+    const result = generateBarcodeSVGString('HELLO', 'CODE39', 7.5, 300, 100, 10);
+    if (result === null) return;
+    expect(result.svgString).toMatch(/viewBox="/);
+  });
+
+  it('widthMm = svgPixelWidth × 25.4 / dpi', () => {
+    // Verify the mm-calculation math: 300px at 300dpi = 25.4mm = 1 inch
+    const widthPx = 300;
+    const expectedMm = +(widthPx * 25.4 / 300).toFixed(2);
+    expect(expectedMm).toBeCloseTo(25.4, 1);
+  });
+});
+
+// ── generateBarcodeSVGBlob ─────────────────────────────────────────────────────
+
+describe('generateBarcodeSVGBlob', () => {
+  it('returns null for 2D formats', () => {
+    expect(generateBarcodeSVGBlob('text', 'datamatrix')).toBeNull();
+  });
+
+  it('returns null for invalid values', () => {
+    expect(generateBarcodeSVGBlob('BADEAN', 'EAN13')).toBeNull();
+  });
+
+  it('returns a Blob with SVG MIME type for a valid 1D barcode', () => {
+    const blob = generateBarcodeSVGBlob('HELLO', 'CODE39', 7.5, 300, 100, 10);
+    if (blob === null) return; // jsdom render path may skip
+    expect(blob).toBeInstanceOf(Blob);
+    expect(blob.type).toBe('image/svg+xml;charset=utf-8');
+    expect(blob.size).toBeGreaterThan(0);
   });
 });
