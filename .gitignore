@@ -28,4 +28,4 @@ nul
 dist_electron/
 
 # Local barcode export scratch folder
-pdf creator/
+#pdf creator/
