@@ -2,18 +2,17 @@ name: Deploy UI Preview
 
 on:
   push:
-    branches: [ main ] # Auto-updates your website on every push
-  workflow_dispatch:   # Also allows manual trigger
+    branches: [ main ]
+  workflow_dispatch: # This creates the button
 
 permissions:
   contents: write
-  pages: write      # Required for GitHub Pages
+  pages: write
   id-token: write
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -33,5 +32,4 @@ jobs:
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./dist   # Ensure your 'npm run build' outputs to 'dist'
-          force_orphan: true
+          publish_dir: ./dist
