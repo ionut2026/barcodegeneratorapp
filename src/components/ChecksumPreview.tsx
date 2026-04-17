@@ -9,7 +9,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { PRINT_FORMATS, PrintFormatId, PRINT_FORMAT_REGISTRY, checkBarcodeFit, generatePageCSS } from '@/lib/printFormats';
+import { PRINT_FORMATS, PrintFormatId, PRINT_FORMAT_REGISTRY, checkBarcodeFit, generatePrintPdf } from '@/lib/printFormats';
 import { toast } from 'sonner';
 
 interface ChecksumVariant {
@@ -67,23 +67,43 @@ export function ChecksumPreview({ variants, inputValue, widthMils = 7.5, dpi = 3
     [variants]
   );
 
-  const escapeHtml = (s: string): string =>
-    s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-
   // Compute bar width from physical config — same formula as the Generate screen
   const modulePixels = Math.max(1, Math.round(widthMils * dpi / 1000));
 
-  const printChecksums = useCallback((formatId: PrintFormatId) => {
+  const printChecksums = useCallback(async (formatId: PrintFormatId) => {
     if (applicable.length === 0) return;
 
     const printFormat = PRINT_FORMAT_REGISTRY[formatId];
-    const pageCSS = generatePageCSS(printFormat);
     const isLabelFormat = formatId !== 'a4-page';
 
-    // Pre-render each barcode SVG using the bundled JsBarcode (no CDN dependency)
-    // and stamp physical mm dimensions on each SVG — same approach as BarcodePreview.tsx.
-    type RenderedCard = { name: string; fullValue: string; svgContent: string; widthMm: number; heightMm: number; widthPx: number; heightPx: number };
-    const renderedCards: RenderedCard[] = [];
+    // Rasterize each barcode SVG to a PNG data URL via a temporary canvas
+    const rasterizeSvg = (svgEl: SVGSVGElement): Promise<{ dataUrl: string; widthPx: number; heightPx: number }> => {
+      return new Promise((resolve, reject) => {
+        const svgData = new XMLSerializer().serializeToString(svgEl);
+        const img = new Image();
+        const blob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        img.onload = () => {
+          const c = document.createElement('canvas');
+          c.width = img.width;
+          c.height = img.height;
+          const ctx = c.getContext('2d');
+          if (!ctx) { URL.revokeObjectURL(url); reject(new Error('Canvas context failed')); return; }
+          ctx.imageSmoothingEnabled = false;
+          ctx.drawImage(img, 0, 0);
+          URL.revokeObjectURL(url);
+          const dataUrl = c.toDataURL('image/png');
+          resolve({ dataUrl, widthPx: c.width, heightPx: c.height });
+          c.width = 0;
+          c.height = 0;
+        };
+        img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('SVG load failed')); };
+        img.src = url;
+      });
+    };
+
+    type PrintableCard = { name: string; fullValue: string; dataUrl: string; widthPx: number; heightPx: number };
+    const printableCards: PrintableCard[] = [];
 
     for (const v of applicable) {
       const tempSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -97,38 +117,21 @@ export function ChecksumPreview({ variants, inputValue, widthMils = 7.5, dpi = 3
           lineColor: '#000000',
           background: '#ffffff',
         });
-        const svgWidthPx = parseFloat(tempSvg.getAttribute('width') || '0');
-        const svgHeightPx = parseFloat(tempSvg.getAttribute('height') || '0');
-        if (!svgWidthPx || !svgHeightPx) continue;
-
-        const wMm = +(svgWidthPx * 25.4 / dpi).toFixed(2);
-        const hMm = +(svgHeightPx * 25.4 / dpi).toFixed(2);
-        tempSvg.setAttribute('viewBox', `0 0 ${svgWidthPx} ${svgHeightPx}`);
-        tempSvg.setAttribute('width', `${wMm}mm`);
-        tempSvg.setAttribute('height', `${hMm}mm`);
-
-        renderedCards.push({
-          name: v.name,
-          fullValue: v.fullValue,
-          svgContent: new XMLSerializer().serializeToString(tempSvg),
-          widthMm: wMm,
-          heightMm: hMm,
-          widthPx: svgWidthPx,
-          heightPx: svgHeightPx,
-        });
+        const result = await rasterizeSvg(tempSvg);
+        printableCards.push({ name: v.name, fullValue: v.fullValue, ...result });
       } catch {
         // skip barcodes that fail to render
       }
     }
 
-    if (renderedCards.length === 0) {
+    if (printableCards.length === 0) {
       toast.error('Failed to render barcodes for print.');
       return;
     }
 
     // Overflow check for label formats — use the widest barcode
     if (isLabelFormat) {
-      const widest = renderedCards.reduce((a, b) => a.widthPx > b.widthPx ? a : b);
+      const widest = printableCards.reduce((a, b) => a.widthPx > b.widthPx ? a : b);
       const fit = checkBarcodeFit(widest.widthPx, widest.heightPx, dpi, printFormat);
       if (!fit.fits) {
         toast.warning(
@@ -138,61 +141,21 @@ export function ChecksumPreview({ variants, inputValue, widthMils = 7.5, dpi = 3
       }
     }
 
-    const printWindow = window.open('', '', 'width=800,height=600');
-    if (!printWindow) { toast.error('Pop-up blocked. Please allow pop-ups.'); return; }
-
-    const cards = renderedCards.map(c => `
-      <div class="cell">
-        <p class="label">${escapeHtml(c.name)}</p>
-        <div class="barcode">${c.svgContent}</div>
-        <span class="value">${escapeHtml(c.fullValue)}</span>
-        <span class="dims">${c.widthMm} &times; ${c.heightMm} mm</span>
-      </div>
-    `).join('');
-
-    const layoutCSS = isLabelFormat
-      ? `
-        .grid { display: block; }
-        .cell {
-          display: flex; flex-direction: column; align-items: center; justify-content: center;
-          padding: 0; border: none; break-after: page;
-          width: ${printFormat.widthMm - 2 * printFormat.marginMm}mm;
-          height: ${printFormat.heightMm - 2 * printFormat.marginMm}mm;
-        }
-        .cell:last-child { break-after: auto; }
-      `
-      : `
-        .grid { display: flex; flex-wrap: wrap; gap: 20px; justify-content: center; }
-        .cell { display: flex; flex-direction: column; align-items: center; break-inside: avoid; padding: 10px; border: 1px solid #eee; border-radius: 8px; }
-      `;
-
-    printWindow.document.write(`<!DOCTYPE html><html><head><title>Checksum Barcodes</title>
-      <style>
-        ${pageCSS}
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: monospace; ${isLabelFormat ? '' : 'padding: 15mm;'} background: white; }
-        ${layoutCSS}
-        .label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; color: #666; margin-bottom: 6px; }
-        .barcode { display: flex; justify-content: center; }
-        .barcode svg { display: block; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-        .value { margin-top: 6px; font-size: ${isLabelFormat ? '10' : '13'}px; font-family: 'Courier New', monospace; color: #000; font-weight: 600; letter-spacing: 0.05em; }
-        .dims { margin-top: 3px; font-size: ${isLabelFormat ? '8' : '10'}px; color: #888; font-family: monospace; }
-        .print-note { text-align: center; font-size: 9pt; color: #888; margin-top: 15mm; font-family: monospace; }
-        @media print { .print-note { display: none; } .cell { ${isLabelFormat ? '' : 'break-inside: avoid;'} } }
-      </style></head>
-      <body>
-        <div class="grid">${cards}</div>
-        <p class="print-note">Print at 100% scale (no fit-to-page) for accurate physical dimensions</p>
-      </body></html>`);
-    printWindow.document.close();
-
-    printWindow.onload = () => {
-      setTimeout(() => {
-        printWindow.focus();
-        printWindow.addEventListener('afterprint', () => printWindow.close());
-        printWindow.print();
-      }, 200);
-    };
+    try {
+      await generatePrintPdf(
+        printableCards.map(c => ({
+          dataUrl: c.dataUrl,
+          widthPx: c.widthPx,
+          heightPx: c.heightPx,
+          dpi,
+          label: `${c.name}: ${c.fullValue}`,
+        })),
+        printFormat,
+      );
+    } catch (error) {
+      console.error('Checksum print error:', error);
+      toast.error('Failed to generate print PDF');
+    }
   }, [applicable, modulePixels, dpi]);
 
   if (!inputValue.trim()) {

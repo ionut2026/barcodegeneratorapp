@@ -12,7 +12,7 @@ import { BarcodeImageResult } from '@/lib/barcodeImageGenerator';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Settings2, Calculator, Sparkles, Layers } from 'lucide-react';
 import { toast } from 'sonner';
-import { PrintFormatId, PRINT_FORMAT_REGISTRY, checkBarcodeFit, generatePageCSS } from '@/lib/printFormats';
+import { PrintFormatId, PRINT_FORMAT_REGISTRY, checkBarcodeFit, generatePrintPdf } from '@/lib/printFormats';
 
 const Index = () => {
   const [config, setConfig] = useState<BarcodeConfig>(getDefaultConfig());
@@ -42,16 +42,13 @@ const Index = () => {
     setChecksumVariants(checksums);
   }, []);
 
-  const handleBatchPrint = useCallback((formatId: PrintFormatId) => {
+  const handleBatchPrint = useCallback(async (formatId: PrintFormatId) => {
     if (batchImages.length === 0) return;
 
     const printFormat = PRINT_FORMAT_REGISTRY[formatId];
-    const pageCSS = generatePageCSS(printFormat);
-    const isLabelFormat = formatId !== 'a4-page';
 
-    // Overflow check: verify all barcodes fit the selected format
-    const hasPhysicalDims = batchImages[0]?.widthMm > 0;
-    if (hasPhysicalDims) {
+    // Overflow check for label formats
+    if (formatId !== 'a4-page' && batchImages[0]?.widthMm > 0) {
       const firstImg = batchImages[0];
       const fit = checkBarcodeFit(firstImg.width, firstImg.height, config.dpi, printFormat);
       if (!fit.fits) {
@@ -62,64 +59,21 @@ const Index = () => {
       }
     }
 
-    const printWindow = window.open('', '', 'width=800,height=600');
-    if (!printWindow) { toast.error('Pop-up blocked. Please allow pop-ups.'); return; }
-
-    const sanitizeDataUrl = (url: string) => url.startsWith('data:image/') ? url.replace(/"/g, '&quot;') : '';
-    const escapeHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-
-    const imgWidthMm = hasPhysicalDims ? batchImages[0].widthMm : 0;
-    const imgHeightMm = hasPhysicalDims ? batchImages[0].heightMm : 0;
-
-    // CSS sizing: explicit mm when available, else fallback to max-width
-    const imgStyle = hasPhysicalDims
-      ? `width: ${imgWidthMm}mm; height: ${imgHeightMm}mm;`
-      : 'max-width: 100%; height: auto;';
-    const imgStylePrint = hasPhysicalDims
-      ? `width: ${imgWidthMm}mm !important; height: ${imgHeightMm}mm !important;`
-      : 'max-width: 100%; height: auto;';
-
-    // Label formats: one barcode per label page. A4: grid layout.
-    const cellsHtml = batchImages.map(img =>
-      `<div class="cell"><img src="${sanitizeDataUrl(img.dataUrl)}" /><span>${escapeHtml(img.value)}</span></div>`
-    ).join('');
-
-    const layoutCSS = isLabelFormat
-      ? `
-        .grid { display: block; }
-        .cell {
-          display: flex; flex-direction: column; align-items: center; justify-content: center;
-          padding: 0; break-after: page;
-          width: ${printFormat.widthMm - 2 * printFormat.marginMm}mm;
-          height: ${printFormat.heightMm - 2 * printFormat.marginMm}mm;
-        }
-        .cell:last-child { break-after: auto; }
-      `
-      : `
-        .grid { display: flex; flex-wrap: wrap; gap: 20px; justify-content: center; }
-        .cell { display: flex; flex-direction: column; align-items: center; break-inside: avoid; padding: 10px; }
-      `;
-
-    printWindow.document.write(`<!DOCTYPE html><html><head><title>Batch Barcodes</title><style>
-      ${pageCSS}
-      * { margin: 0; padding: 0; box-sizing: border-box; }
-      body { font-family: monospace; ${isLabelFormat ? '' : 'padding: 15mm;'} }
-      ${layoutCSS}
-      .cell img { ${imgStyle} image-rendering: crisp-edges; image-rendering: pixelated; }
-      .cell span { margin-top: ${isLabelFormat ? '2' : '8'}px; font-size: ${isLabelFormat ? '10' : '13'}px; font-family: 'Courier New', monospace; color: #000; font-weight: 600; letter-spacing: 0.05em; }
-      @media print {
-        ${isLabelFormat ? '' : 'body { padding: 10mm; }'}
-        .cell { ${isLabelFormat ? '' : 'break-inside: avoid;'} }
-        .cell img { ${imgStylePrint} print-color-adjust: exact; -webkit-print-color-adjust: exact; }
-      }
-    </style></head><body><div class="grid">${cellsHtml}</div><script>
-      window.addEventListener('afterprint', function() { window.close(); });
-      const imgs = document.querySelectorAll('img');
-      let loaded = 0;
-      imgs.forEach(i => { if (i.complete) { loaded++; } else { i.onload = () => { loaded++; if(loaded>=imgs.length) window.print(); }; }});
-      if(loaded >= imgs.length) window.print();
-    </script></body></html>`);
-    printWindow.document.close();
+    try {
+      await generatePrintPdf(
+        batchImages.map(img => ({
+          dataUrl: img.dataUrl,
+          widthPx: img.width,
+          heightPx: img.height,
+          dpi: config.dpi,
+          label: img.value,
+        })),
+        printFormat,
+      );
+    } catch (error) {
+      console.error('Batch print error:', error);
+      toast.error('Failed to generate print PDF');
+    }
   }, [batchImages, config.dpi]);
 
   return (

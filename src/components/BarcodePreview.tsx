@@ -11,7 +11,7 @@ import { BarcodeExportActions } from '@/components/BarcodeExportActions';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
-import { PrintFormatId, PRINT_FORMAT_REGISTRY, checkBarcodeFit, generatePageCSS } from '@/lib/printFormats';
+import { PrintFormatId, PRINT_FORMAT_REGISTRY, checkBarcodeFit, generatePrintPdf } from '@/lib/printFormats';
 
 interface BarcodePreviewProps {
   config: BarcodeConfig;
@@ -143,220 +143,45 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
     }
   };
 
-  // Print barcode — renders at base DPI resolution (no scale), no effects, margin:0.
-  // 1D in browser: SVG is embedded inline so the printer receives vector data at the
-  // correct physical mm size.  1D in Electron or 2D (any): canvas → PNG path.
+  // Print barcode — generates a PDF via jsPDF with exact physical dimensions.
+  // The barcode is rendered at base DPI (no scale, no effects, margin:0) and
+  // placed in the PDF at its exact mm size — never scaled or rotated.
   // pixels = round(widthMils × dpi / 1000) per module → mm = pixels × 25.4 / dpi
-  const printBarcode = (formatId: PrintFormatId) => {
+  const printBarcode = async (formatId: PrintFormatId) => {
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext('2d');
     if (!canvas || !ctx) return;
 
-    const actualMils = ((modulePixels * 1000) / config.dpi).toFixed(1);
-    const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI;
     const printFormat = PRINT_FORMAT_REGISTRY[formatId];
-    const pageCSS = generatePageCSS(printFormat);
 
-    // Open a print window with an SVG barcode embedded inline.
-    // The SVG's width/height attributes are already in mm, so the printer uses
-    // physical dimensions directly — no DPI math required on the print side.
-    const openSvgPrintWindow = (svgContent: string, widthMm: number, heightMm: number) => {
-      const printWindow = window.open('', '', 'width=800,height=600');
-      if (!printWindow) {
-        toast.error('Failed to open print window. Please check your popup blocker.');
-        return;
-      }
-      printWindow.document.write(`
-        <!DOCTYPE html>
-        <html>
-          <head>
-            <title>Print Barcode</title>
-            <style>
-              ${pageCSS}
-              * {
-                margin: 0;
-                padding: 0;
-                box-sizing: border-box;
-              }
-              body {
-                display: flex;
-                flex-direction: column;
-                align-items: center;
-                justify-content: center;
-                min-height: 100vh;
-                background: white;
-              }
-              .barcode-svg {
-                display: block;
-                width: ${widthMm}mm;
-                height: ${heightMm}mm;
-              }
-              .barcode-svg svg {
-                display: block;
-                width: ${widthMm}mm;
-                height: ${heightMm}mm;
-              }
-              .print-info {
-                margin-top: 8mm;
-                font-family: monospace;
-                font-size: 9pt;
-                color: #666;
-                text-align: center;
-                line-height: 1.6;
-              }
-              @media print {
-                body {
-                  min-height: auto;
-                }
-                .barcode-svg, .barcode-svg svg {
-                  width: ${widthMm}mm;
-                  height: ${heightMm}mm;
-                  -webkit-print-color-adjust: exact;
-                  print-color-adjust: exact;
-                }
-                .print-info {
-                  display: none;
-                }
-              }
-            </style>
-          </head>
-          <body>
-            <div class="barcode-svg">${svgContent}</div>
-            <div class="print-info">
-              ${widthMm} &times; ${heightMm} mm &middot; ${actualMils} mil module (SVG vector)<br/>
-              Print at 100% scale (no fit-to-page) for accurate physical dimensions
-            </div>
-          </body>
-        </html>
-      `);
-      printWindow.document.close();
-
-      printWindow.onload = () => {
-        setTimeout(() => {
-          printWindow.focus();
-          printWindow.addEventListener('afterprint', () => printWindow.close());
-          printWindow.print();
-        }, 100);
-      };
+    // Helper: rasterize SVG to a PNG data URL via canvas
+    const svgToDataUrl = (svgEl: SVGSVGElement): Promise<{ dataUrl: string; widthPx: number; heightPx: number }> => {
+      return new Promise((resolve, reject) => {
+        const svgData = new XMLSerializer().serializeToString(svgEl);
+        const img = new Image();
+        const blob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        img.onload = () => {
+          canvas.width = img.width;
+          canvas.height = img.height;
+          ctx.imageSmoothingEnabled = false;
+          ctx.drawImage(img, 0, 0);
+          URL.revokeObjectURL(url);
+          resolve({ dataUrl: canvas.toDataURL('image/png'), widthPx: canvas.width, heightPx: canvas.height });
+        };
+        img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('SVG rasterization failed')); };
+        img.src = url;
+      });
     };
 
-    const openPrintWindow = (imageDataUrl: string, imgWidthPx: number, imgHeightPx: number) => {
-      if (!imageDataUrl.startsWith('data:image/')) {
-        console.error('openPrintWindow: invalid image data URL');
-        return;
-      }
-      const printWindow = window.open('', '', 'width=800,height=600');
-      if (!printWindow) {
-        toast.error('Failed to open print window. Please check your popup blocker.');
-        return;
-      }
+    try {
+      let dataUrl: string;
+      let widthPx: number;
+      let heightPx: number;
 
-      // No scale in the denominator — image is at base DPI, pixels map 1:1 to dots.
-      const imgWidthMm = (imgWidthPx * 25.4 / config.dpi).toFixed(2);
-      const imgHeightMm = (imgHeightPx * 25.4 / config.dpi).toFixed(2);
-
-      printWindow.document.write(`
-        <!DOCTYPE html>
-        <html>
-          <head>
-            <title>Print Barcode</title>
-            <style>
-              ${pageCSS}
-              * {
-                margin: 0;
-                padding: 0;
-                box-sizing: border-box;
-              }
-              body {
-                display: flex;
-                flex-direction: column;
-                align-items: center;
-                justify-content: center;
-                min-height: 100vh;
-                background: white;
-              }
-              img {
-                width: ${imgWidthMm}mm;
-                height: ${imgHeightMm}mm;
-                image-rendering: -webkit-optimize-contrast;
-                image-rendering: crisp-edges;
-                image-rendering: pixelated;
-                -ms-interpolation-mode: nearest-neighbor;
-              }
-              .print-info {
-                margin-top: 8mm;
-                font-family: monospace;
-                font-size: 9pt;
-                color: #666;
-                text-align: center;
-                line-height: 1.6;
-              }
-              @media print {
-                body {
-                  min-height: auto;
-                }
-                img {
-                  width: ${imgWidthMm}mm;
-                  height: ${imgHeightMm}mm;
-                  -webkit-print-color-adjust: exact;
-                  print-color-adjust: exact;
-                }
-                .print-info {
-                  display: none;
-                }
-              }
-            </style>
-          </head>
-          <body>
-            <img src="${imageDataUrl}" alt="Barcode" />
-            <div class="print-info">
-              ${imgWidthMm} &times; ${imgHeightMm} mm &middot; ${imgWidthPx} &times; ${imgHeightPx} px &middot; ${config.dpi} DPI &middot; ${actualMils} mil module<br/>
-              Print at 100% scale (no fit-to-page) for accurate physical dimensions
-            </div>
-          </body>
-        </html>
-      `);
-      printWindow.document.close();
-
-      printWindow.onload = () => {
-        setTimeout(() => {
-          printWindow.focus();
-          printWindow.addEventListener('afterprint', () => printWindow.close());
-          printWindow.print();
-        }, 100);
-      };
-    };
-
-    const dispatchPrint = (rawDataUrl: string, widthPx: number, heightPx: number) => {
-      const fit = checkBarcodeFit(widthPx, heightPx, config.dpi, printFormat);
-      if (!fit.fits) {
-        toast.warning(
-          `Barcode (${fit.barcodeWidthMm.toFixed(1)} \u00d7 ${fit.barcodeHeightMm.toFixed(1)} mm) exceeds ${printFormat.label} printable area (${fit.printableWidthMm.toFixed(1)} \u00d7 ${fit.printableHeightMm.toFixed(1)} mm). Reduce bar width or bar height to fit.`
-        );
-        return;
-      }
-      const dataUrl = injectPngDpi(rawDataUrl, config.dpi);
-      if (isElectron) {
-        (window as any).electronAPI.printBarcode(dataUrl, {
-          widthMm: +(widthPx * 25.4 / config.dpi).toFixed(2),
-          heightMm: +(heightPx * 25.4 / config.dpi).toFixed(2),
-          widthPx,
-          heightPx,
-          dpi: config.dpi,
-          actualMils: +((modulePixels * 1000) / config.dpi).toFixed(1),
-          printFormat: formatId,
-          labelWidthMm: printFormat.widthMm,
-          labelHeightMm: printFormat.heightMm,
-          labelMarginMm: printFormat.marginMm,
-        });
-        return;
-      }
-      openPrintWindow(dataUrl, widthPx, heightPx);
-    };
-
-    if (is2D) {
-      const tempCanvas = document.createElement('canvas');
-      try {
+      if (is2D) {
+        // 2D barcode: render via bwip-js to canvas
+        const tempCanvas = document.createElement('canvas');
         const bwipOptions: Record<string, unknown> = {
           bcid: config.format,
           text: barcodeText,
@@ -373,17 +198,15 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
           bwipOptions.width = Math.floor(config.height / 3);
         }
         bwipjs.toCanvas(tempCanvas, bwipOptions as unknown as Parameters<typeof bwipjs.toCanvas>[1]);
-        dispatchPrint(tempCanvas.toDataURL('image/png'), tempCanvas.width, tempCanvas.height);
+        dataUrl = tempCanvas.toDataURL('image/png');
+        widthPx = tempCanvas.width;
+        heightPx = tempCanvas.height;
         tempCanvas.width = 0;
         tempCanvas.height = 0;
-      } catch (error) {
-        console.error('Print 2D barcode error:', error);
-      }
-    } else {
-      // 1D barcode: browser → SVG inline (vector, physical mm); Electron → canvas PNG.
-      const tempSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-      const renderText = normalizeForRendering(barcodeText, config.format);
-      try {
+      } else {
+        // 1D barcode: render via JsBarcode to SVG, then rasterize to PNG
+        const tempSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        const renderText = normalizeForRendering(barcodeText, config.format);
         JsBarcode(tempSvg, renderText, {
           format: config.format,
           width: modulePixels,
@@ -397,49 +220,29 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
           textMargin: 2,
         });
         snapSvgToPixels(tempSvg);
-
-        if (!isElectron) {
-          // Browser: embed SVG inline in the print window — vector quality, exact physical size.
-          const svgWidthPx = parseFloat(tempSvg.getAttribute('width') || '0');
-          const svgHeightPx = parseFloat(tempSvg.getAttribute('height') || '0');
-          if (!svgWidthPx || !svgHeightPx) throw new Error('SVG rendered without dimensions');
-          const wMm = +(svgWidthPx * 25.4 / config.dpi).toFixed(2);
-          const hMm = +(svgHeightPx * 25.4 / config.dpi).toFixed(2);
-          const fit = checkBarcodeFit(svgWidthPx, svgHeightPx, config.dpi, printFormat);
-          if (!fit.fits) {
-            toast.warning(
-              `Barcode (${fit.barcodeWidthMm.toFixed(1)} \u00d7 ${fit.barcodeHeightMm.toFixed(1)} mm) exceeds ${printFormat.label} printable area (${fit.printableWidthMm.toFixed(1)} \u00d7 ${fit.printableHeightMm.toFixed(1)} mm). Reduce bar width or bar height to fit.`
-            );
-            return;
-          }
-          tempSvg.setAttribute('viewBox', `0 0 ${svgWidthPx} ${svgHeightPx}`);
-          tempSvg.setAttribute('width', `${wMm}mm`);
-          tempSvg.setAttribute('height', `${hMm}mm`);
-          openSvgPrintWindow(new XMLSerializer().serializeToString(tempSvg), wMm, hMm);
-        } else {
-          // Electron: rasterize SVG → canvas → PNG (Electron print handler expects PNG data URL).
-          const svgData = new XMLSerializer().serializeToString(tempSvg);
-          const img = new Image();
-          const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
-          const url = URL.createObjectURL(svgBlob);
-          img.onload = () => {
-            canvas.width = img.width;
-            canvas.height = img.height;
-            ctx.imageSmoothingEnabled = false;
-            ctx.drawImage(img, 0, 0);
-            URL.revokeObjectURL(url);
-            dispatchPrint(canvas.toDataURL('image/png'), canvas.width, canvas.height);
-          };
-          img.onerror = () => {
-            URL.revokeObjectURL(url);
-            toast.error('Failed to render barcode for printing');
-          };
-          img.src = url;
-        }
-      } catch (error) {
-        console.error('Print 1D barcode error:', error);
-        toast.error('Failed to render barcode for printing');
+        const result = await svgToDataUrl(tempSvg);
+        dataUrl = result.dataUrl;
+        widthPx = result.widthPx;
+        heightPx = result.heightPx;
       }
+
+      // Overflow check — never scale, block if too large
+      const fit = checkBarcodeFit(widthPx, heightPx, config.dpi, printFormat);
+      if (!fit.fits) {
+        toast.warning(
+          `Barcode (${fit.barcodeWidthMm.toFixed(1)} \u00d7 ${fit.barcodeHeightMm.toFixed(1)} mm) exceeds ${printFormat.label} printable area (${fit.printableWidthMm.toFixed(1)} \u00d7 ${fit.printableHeightMm.toFixed(1)} mm). Reduce bar width or bar height to fit.`
+        );
+        return;
+      }
+
+      // Generate PDF and open in new tab for printing
+      await generatePrintPdf(
+        [{ dataUrl, widthPx, heightPx, dpi: config.dpi, label: barcodeText }],
+        printFormat,
+      );
+    } catch (error) {
+      console.error('Print barcode error:', error);
+      toast.error('Failed to generate print PDF');
     }
   };
 
