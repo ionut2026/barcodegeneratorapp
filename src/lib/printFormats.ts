@@ -95,8 +95,16 @@ export interface PrintItem {
 }
 
 /**
- * Generate a PDF with one barcode per page for label formats, or a grid for A4.
- * The barcode image is placed at its exact physical mm size — never scaled.
+ * Generate a PDF on A4 portrait pages with barcodes stacked vertically,
+ * each inside a drawn label-sized rectangle.
+ *
+ * The selected format controls the **rectangle size** drawn on the page:
+ * - 100×50mm label → 100×50mm rectangles
+ * - 40×21mm label  → 40×21mm rectangles
+ * - A4 page        → no rectangles, barcodes placed at actual size
+ *
+ * Barcodes are centered inside each rectangle at their exact physical mm
+ * size. If a barcode is wider than the rectangle, it is scaled down to fit.
  * Calls jsPDF dynamically to keep the import out of the initial bundle.
  */
 export async function generatePrintPdf(
@@ -107,90 +115,134 @@ export async function generatePrintPdf(
 
   const { jsPDF } = await import('jspdf');
 
-  const pageW = format.widthMm;
-  const pageH = format.heightMm;
-  const margin = format.marginMm;
-  const printableW = pageW - 2 * margin;
-  const printableH = pageH - 2 * margin;
-  const isLabel = format.id !== 'a4-page';
-
-  // jsPDF page format: [width, height] in mm, landscape when width > height
-  const orientation = pageW > pageH ? 'landscape' as const : 'portrait' as const;
-  // jsPDF wants [shorter, longer] for the format array regardless of orientation
-  const formatArr: [number, number] = pageW > pageH
-    ? [pageH, pageW]
-    : [pageW, pageH];
+  // Always use A4 portrait — avoids jsPDF landscape orientation bugs
+  const pageW = 210;
+  const pageH = 297;
+  const pageMargin = 10;
 
   const pdf = new jsPDF({
-    orientation,
     unit: 'mm',
-    format: formatArr,
+    format: 'a4',
+    orientation: 'portrait',
   });
 
+  const isLabel = format.id !== 'a4-page';
+
+  // Rectangle dimensions for label formats
+  const rectW = isLabel ? format.widthMm : 0;
+  const rectH = isLabel ? format.heightMm : 0;
+  const rectMargin = isLabel ? format.marginMm : 0;
+
+  // Gaps between cells
+  const gapX = 4;
+  const gapY = 4;
+
+  const printableW = pageW - 2 * pageMargin;
+  const printableH = pageH - 2 * pageMargin;
+  const labelTextH = 5; // space for text below barcode
+
   if (isLabel) {
-    // Label mode: one barcode centered per page
-    for (let i = 0; i < items.length; i++) {
-      if (i > 0) pdf.addPage(formatArr, orientation);
+    // ── Label mode: single column, left-aligned, stacked vertically ──
+    const rows = Math.max(1, Math.floor((printableH + gapY) / (rectH + gapY)));
 
-      const item = items[i];
-      const imgWmm = item.widthPx * 25.4 / item.dpi;
-      const imgHmm = item.heightPx * 25.4 / item.dpi;
+    const totalPages = Math.ceil(items.length / rows);
 
-      // Center the barcode on the page (within margins)
-      const x = margin + (printableW - imgWmm) / 2;
-      const y = margin + (printableH - imgHmm) / 2;
+    for (let page = 0; page < totalPages; page++) {
+      if (page > 0) pdf.addPage('a4', 'portrait');
 
-      pdf.addImage(item.dataUrl, 'PNG', x, y, imgWmm, imgHmm);
+      for (let row = 0; row < rows; row++) {
+        const idx = page * rows + row;
+        if (idx >= items.length) break;
 
-      if (item.label) {
-        pdf.setFontSize(7);
-        pdf.setFont('courier');
-        pdf.text(item.label, pageW / 2, y + imgHmm + 3, { align: 'center' });
+        const rectX = pageMargin;
+        const cellY = pageMargin + row * (rectH + gapY);
+
+        // Draw label border rectangle
+        pdf.setDrawColor(160);
+        pdf.setLineWidth(0.3);
+        pdf.rect(rectX, cellY, rectW, rectH);
+
+        const item = items[idx];
+        const imgWmm = item.widthPx * 25.4 / item.dpi;
+        const imgHmm = item.heightPx * 25.4 / item.dpi;
+
+        // Available area inside the rectangle
+        const innerW = rectW - 2 * rectMargin;
+        const innerH = rectH - 2 * rectMargin;
+
+        // Scale barcode down if it exceeds the rectangle's inner area
+        let drawW = imgWmm;
+        let drawH = imgHmm;
+        if (drawW > innerW) {
+          const s = innerW / drawW;
+          drawW *= s;
+          drawH *= s;
+        }
+        if (drawH > innerH - labelTextH) {
+          const s = (innerH - labelTextH) / drawH;
+          drawW *= s;
+          drawH *= s;
+        }
+
+        // Center barcode inside the rectangle
+        const x = rectX + (rectW - drawW) / 2;
+        const y = cellY + rectMargin + (innerH - labelTextH - drawH) / 2;
+
+        pdf.addImage(item.dataUrl, 'PNG', x, y, drawW, drawH);
+
+        if (item.label) {
+          pdf.setFontSize(7);
+          pdf.setFont('courier');
+          pdf.setTextColor(0);
+          pdf.text(item.label, rectX + rectW / 2, y + drawH + 3.5, { align: 'center' });
+        }
       }
     }
   } else {
-    // A4 grid mode: multiple barcodes per page
-    const gap = 10;
-    const rowGap = 8;
-    const labelH = 8;
-    const firstItem = items[0];
-    const imgWmm = firstItem.widthPx * 25.4 / firstItem.dpi;
-    const imgHmm = firstItem.heightPx * 25.4 / firstItem.dpi;
+    // ── A4 mode: multi-column grid, left-aligned, no rectangles ──
+    const firstImgWmm = items[0].widthPx * 25.4 / items[0].dpi;
+    const firstImgHmm = items[0].heightPx * 25.4 / items[0].dpi;
+    const cellH = firstImgHmm + labelTextH;
 
-    const cols = Math.max(1, Math.floor((printableW + gap) / (imgWmm + gap)));
-    const cellW = (printableW - (cols - 1) * gap) / cols;
-    // Scale ratio only used for A4 grid layout — labels never scale
-    const scaleRatio = cellW / imgWmm;
-    const cellH = imgHmm * scaleRatio + labelH;
+    const cols = Math.max(1, Math.floor((printableW + gapX) / (firstImgWmm + gapX)));
+    const rows = Math.max(1, Math.floor((printableH + gapY) / (cellH + gapY)));
+    const perPage = cols * rows;
 
-    let y = margin;
+    const totalPages = Math.ceil(items.length / perPage);
 
-    items.forEach((item, i) => {
-      if (y + cellH > pageH - margin) {
-        pdf.addPage(formatArr, orientation);
-        y = margin;
+    for (let page = 0; page < totalPages; page++) {
+      if (page > 0) pdf.addPage('a4', 'portrait');
+
+      for (let slot = 0; slot < perPage; slot++) {
+        const idx = page * perPage + slot;
+        if (idx >= items.length) break;
+
+        const col = slot % cols;
+        const row = Math.floor(slot / cols);
+
+        const item = items[idx];
+        const imgWmm = item.widthPx * 25.4 / item.dpi;
+        const imgHmm = item.heightPx * 25.4 / item.dpi;
+
+        const x = pageMargin + col * (firstImgWmm + gapX) + (firstImgWmm - imgWmm) / 2;
+        const cellY = pageMargin + row * (cellH + gapY);
+
+        pdf.addImage(item.dataUrl, 'PNG', x, cellY, imgWmm, imgHmm);
+
+        if (item.label) {
+          pdf.setFontSize(7);
+          pdf.setFont('courier');
+          pdf.setTextColor(0);
+          const labelX = pageMargin + col * (firstImgWmm + gapX) + firstImgWmm / 2;
+          pdf.text(item.label, labelX, cellY + imgHmm + 3.5, { align: 'center' });
+        }
       }
-      const col = i % cols;
-      const x = margin + col * (cellW + gap);
-      const itemScaleRatio = cellW / (item.widthPx * 25.4 / item.dpi);
-      const itemHmm = (item.heightPx * 25.4 / item.dpi) * itemScaleRatio;
-
-      pdf.addImage(item.dataUrl, 'PNG', x, y, cellW, itemHmm);
-
-      if (item.label) {
-        pdf.setFontSize(7);
-        pdf.setFont('courier');
-        pdf.text(item.label, x + cellW / 2, y + itemHmm + 3, { align: 'center' });
-      }
-
-      if (col === cols - 1) y += itemHmm + labelH + rowGap;
-    });
+    }
   }
 
-  // Open PDF in a new tab for print preview (user can print from there)
+  // Open PDF in a new tab for print preview
   const pdfBlob = pdf.output('blob');
   const url = URL.createObjectURL(pdfBlob);
   window.open(url, '_blank');
-  // Clean up after a delay to let the browser tab load
   setTimeout(() => URL.revokeObjectURL(url), 60000);
 }
