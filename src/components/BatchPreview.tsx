@@ -1,13 +1,20 @@
 import { BarcodeImageResult } from '@/lib/barcodeImageGenerator';
 import { injectPngDpi } from '@/lib/barcodeImageGenerator';
 import { Button } from '@/components/ui/button';
-import { Printer, Layers, FileArchive, FileText, Download } from 'lucide-react';
+import { Printer, Layers, FileArchive, FileText, Download, ChevronDown } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { PRINT_FORMATS, PrintFormatId } from '@/lib/printFormats';
 import { toast } from 'sonner';
 
 interface BatchPreviewProps {
   images: BarcodeImageResult[];
-  onPrint: () => void;
+  onPrint: (format: PrintFormatId) => void;
   onDownloadZip?: () => void;
   onExportPDF?: () => void;
   isGenerating: boolean;
@@ -171,15 +178,29 @@ export function BatchPreview({ images, onPrint, onDownloadZip, onExportPDF, isGe
               <FileText className="h-4 w-4" />
               PDF
             </Button>
-            <Button
-              size="sm"
-              onClick={onPrint}
-              disabled={isGenerating}
-              className="gap-2 rounded-xl h-10 px-4 download-btn text-white font-medium"
-            >
-              <Printer className="h-4 w-4" />
-              Print
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  size="sm"
+                  disabled={isGenerating}
+                  className="gap-2 rounded-xl h-10 px-4 download-btn text-white font-medium"
+                >
+                  <Printer className="h-4 w-4" />
+                  Print
+                  <ChevronDown className="h-3 w-3 ml-0.5 opacity-70" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                {PRINT_FORMATS.map((f) => (
+                  <DropdownMenuItem key={f.id} onClick={() => onPrint(f.id)}>
+                    <div className="flex flex-col">
+                      <span className="font-medium">{f.label}</span>
+                      <span className="text-xs text-muted-foreground">{f.description}</span>
+                    </div>
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         )}
       </div>

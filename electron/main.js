@@ -48,6 +48,12 @@ ipcMain.on('print-barcode', (event, imageDataUrl, dims) => {
   const dpi       = hasDims ? dims.dpi      : 0;
   const actualMils = hasDims ? dims.actualMils : 0;
 
+  // Label/page format from renderer (optional — may be absent for older callers)
+  const printFormat = dims && dims.printFormat || null;
+  const labelWidthMm = dims && dims.labelWidthMm || 0;
+  const labelHeightMm = dims && dims.labelHeightMm || 0;
+  const labelMarginMm = dims && dims.labelMarginMm || 0;
+
   // CSS sizing: use exact mm dimensions when available, else fall back to
   // max-width so the image at least doesn't overflow the page.
   const imgCss = hasDims
@@ -61,9 +67,13 @@ ipcMain.on('print-barcode', (event, imageDataUrl, dims) => {
     ? `${widthMm} &times; ${heightMm} mm &middot; ${widthPx} &times; ${heightPx} px &middot; ${dpi} DPI &middot; ${actualMils} mil module`
     : '';
 
+  // Adjust preview window size based on label format
+  const previewWidth = printFormat === 'label-40x21' ? 500 : 800;
+  const previewHeight = printFormat === 'label-40x21' ? 400 : 600;
+
   const printWindow = new BrowserWindow({
-    width: 800,
-    height: 600,
+    width: previewWidth,
+    height: previewHeight,
     show: true,
     title: 'Print Preview - Barcode',
     webPreferences: {
@@ -146,7 +156,11 @@ ipcMain.on('print-barcode', (event, imageDataUrl, dims) => {
             align-items: center;
             min-height: 100vh;
           }
-          @page { size: auto; margin: 10mm; }
+          @page {
+            ${printFormat === 'a4-page' ? `size: A4; margin: ${labelMarginMm || 10}mm;`
+              : labelWidthMm && labelHeightMm ? `size: ${labelWidthMm}mm ${labelHeightMm}mm; margin: ${labelMarginMm}mm;`
+              : 'size: auto; margin: 10mm;'}
+          }
           img {
             ${imgCssPrint}
             image-rendering: -webkit-optimize-contrast;
@@ -165,7 +179,7 @@ ipcMain.on('print-barcode', (event, imageDataUrl, dims) => {
         <button class="print-btn" onclick="window.print()">Print</button>
         <button class="cancel-btn" onclick="window.close()">Cancel</button>
         <span style="margin-left: auto; color: #6b7280; font-size: 13px;">
-          Print at 100% scale (no fit-to-page) for accurate dimensions
+          ${printFormat && printFormat !== 'a4-page' ? `Label: ${labelWidthMm}\u00d7${labelHeightMm}mm \u2014 ` : ''}Print at 100% scale (no fit-to-page) for accurate dimensions
         </span>
       </div>
       <div class="preview-container">

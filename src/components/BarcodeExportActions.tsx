@@ -1,12 +1,19 @@
 import { useState } from 'react';
-import { Download, Copy, Check, Printer } from 'lucide-react';
+import { Download, Copy, Check, Printer, ChevronDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { PRINT_FORMATS, PrintFormatId } from '@/lib/printFormats';
 
 interface BarcodeExportActionsProps {
   disabled: boolean;
   onDownload: () => Promise<void>;
   onCopy: () => Promise<void>;
-  onPrint: () => void;
+  onPrint: (format: PrintFormatId) => void;
 }
 
 export function BarcodeExportActions({
@@ -47,15 +54,29 @@ export function BarcodeExportActions({
         <Download className="h-4 w-4" />
         Download PNG
       </Button>
-      <Button
-        size="sm"
-        onClick={onPrint}
-        disabled={disabled}
-        className="gap-2 rounded-xl h-10 px-4 download-btn text-white font-medium"
-      >
-        <Printer className="h-4 w-4" />
-        Print
-      </Button>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            size="sm"
+            disabled={disabled}
+            className="gap-2 rounded-xl h-10 px-4 download-btn text-white font-medium"
+          >
+            <Printer className="h-4 w-4" />
+            Print
+            <ChevronDown className="h-3 w-3 ml-0.5 opacity-70" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-56">
+          {PRINT_FORMATS.map((f) => (
+            <DropdownMenuItem key={f.id} onClick={() => onPrint(f.id)}>
+              <div className="flex flex-col">
+                <span className="font-medium">{f.label}</span>
+                <span className="text-xs text-muted-foreground">{f.description}</span>
+              </div>
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   );
 }

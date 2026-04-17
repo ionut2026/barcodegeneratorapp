@@ -11,6 +11,7 @@ import { BarcodeExportActions } from '@/components/BarcodeExportActions';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
+import { PrintFormatId, PRINT_FORMAT_REGISTRY, checkBarcodeFit, generatePageCSS } from '@/lib/printFormats';
 
 interface BarcodePreviewProps {
   config: BarcodeConfig;
@@ -146,13 +147,15 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
   // 1D in browser: SVG is embedded inline so the printer receives vector data at the
   // correct physical mm size.  1D in Electron or 2D (any): canvas → PNG path.
   // pixels = round(widthMils × dpi / 1000) per module → mm = pixels × 25.4 / dpi
-  const printBarcode = () => {
+  const printBarcode = (formatId: PrintFormatId) => {
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext('2d');
     if (!canvas || !ctx) return;
 
     const actualMils = ((modulePixels * 1000) / config.dpi).toFixed(1);
     const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI;
+    const printFormat = PRINT_FORMAT_REGISTRY[formatId];
+    const pageCSS = generatePageCSS(printFormat);
 
     // Open a print window with an SVG barcode embedded inline.
     // The SVG's width/height attributes are already in mm, so the printer uses
@@ -169,10 +172,7 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
           <head>
             <title>Print Barcode</title>
             <style>
-              @page {
-                size: auto;
-                margin: 10mm;
-              }
+              ${pageCSS}
               * {
                 margin: 0;
                 padding: 0;
@@ -261,10 +261,7 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
           <head>
             <title>Print Barcode</title>
             <style>
-              @page {
-                size: auto;
-                margin: 10mm;
-              }
+              ${pageCSS}
               * {
                 margin: 0;
                 padding: 0;
@@ -331,6 +328,13 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
     };
 
     const dispatchPrint = (rawDataUrl: string, widthPx: number, heightPx: number) => {
+      const fit = checkBarcodeFit(widthPx, heightPx, config.dpi, printFormat);
+      if (!fit.fits) {
+        toast.warning(
+          `Barcode (${fit.barcodeWidthMm.toFixed(1)} \u00d7 ${fit.barcodeHeightMm.toFixed(1)} mm) exceeds ${printFormat.label} printable area (${fit.printableWidthMm.toFixed(1)} \u00d7 ${fit.printableHeightMm.toFixed(1)} mm). Reduce bar width or bar height to fit.`
+        );
+        return;
+      }
       const dataUrl = injectPngDpi(rawDataUrl, config.dpi);
       if (isElectron) {
         (window as any).electronAPI.printBarcode(dataUrl, {
@@ -340,6 +344,10 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
           heightPx,
           dpi: config.dpi,
           actualMils: +((modulePixels * 1000) / config.dpi).toFixed(1),
+          printFormat: formatId,
+          labelWidthMm: printFormat.widthMm,
+          labelHeightMm: printFormat.heightMm,
+          labelMarginMm: printFormat.marginMm,
         });
         return;
       }
@@ -397,6 +405,13 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
           if (!svgWidthPx || !svgHeightPx) throw new Error('SVG rendered without dimensions');
           const wMm = +(svgWidthPx * 25.4 / config.dpi).toFixed(2);
           const hMm = +(svgHeightPx * 25.4 / config.dpi).toFixed(2);
+          const fit = checkBarcodeFit(svgWidthPx, svgHeightPx, config.dpi, printFormat);
+          if (!fit.fits) {
+            toast.warning(
+              `Barcode (${fit.barcodeWidthMm.toFixed(1)} \u00d7 ${fit.barcodeHeightMm.toFixed(1)} mm) exceeds ${printFormat.label} printable area (${fit.printableWidthMm.toFixed(1)} \u00d7 ${fit.printableHeightMm.toFixed(1)} mm). Reduce bar width or bar height to fit.`
+            );
+            return;
+          }
           tempSvg.setAttribute('viewBox', `0 0 ${svgWidthPx} ${svgHeightPx}`);
           tempSvg.setAttribute('width', `${wMm}mm`);
           tempSvg.setAttribute('height', `${hMm}mm`);

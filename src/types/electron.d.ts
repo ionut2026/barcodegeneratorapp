@@ -10,6 +10,10 @@ declare global {
           heightPx: number;
           dpi: number;
           actualMils: number;
+          printFormat?: string;
+          labelWidthMm?: number;
+          labelHeightMm?: number;
+          labelMarginMm?: number;
         },
       ) => void;
     };

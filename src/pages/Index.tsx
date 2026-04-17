@@ -12,6 +12,7 @@ import { BarcodeImageResult } from '@/lib/barcodeImageGenerator';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Settings2, Calculator, Sparkles, Layers } from 'lucide-react';
 import { toast } from 'sonner';
+import { PrintFormatId, PRINT_FORMAT_REGISTRY, checkBarcodeFit, generatePageCSS } from '@/lib/printFormats';
 
 const Index = () => {
   const [config, setConfig] = useState<BarcodeConfig>(getDefaultConfig());
@@ -41,8 +42,25 @@ const Index = () => {
     setChecksumVariants(checksums);
   }, []);
 
-  const handleBatchPrint = useCallback(() => {
+  const handleBatchPrint = useCallback((formatId: PrintFormatId) => {
     if (batchImages.length === 0) return;
+
+    const printFormat = PRINT_FORMAT_REGISTRY[formatId];
+    const pageCSS = generatePageCSS(printFormat);
+    const isLabelFormat = formatId !== 'a4-page';
+
+    // Overflow check: verify all barcodes fit the selected format
+    const hasPhysicalDims = batchImages[0]?.widthMm > 0;
+    if (hasPhysicalDims) {
+      const firstImg = batchImages[0];
+      const fit = checkBarcodeFit(firstImg.width, firstImg.height, config.dpi, printFormat);
+      if (!fit.fits) {
+        toast.warning(
+          `Barcode (${fit.barcodeWidthMm.toFixed(1)} \u00d7 ${fit.barcodeHeightMm.toFixed(1)} mm) exceeds ${printFormat.label} printable area (${fit.printableWidthMm.toFixed(1)} \u00d7 ${fit.printableHeightMm.toFixed(1)} mm). Reduce bar width or bar height to fit.`
+        );
+        return;
+      }
+    }
 
     const printWindow = window.open('', '', 'width=800,height=600');
     if (!printWindow) { toast.error('Pop-up blocked. Please allow pop-ups.'); return; }
@@ -50,8 +68,6 @@ const Index = () => {
     const sanitizeDataUrl = (url: string) => url.startsWith('data:image/') ? url.replace(/"/g, '&quot;') : '';
     const escapeHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
-    // Use physical mm dimensions from image results for accurate print sizing
-    const hasPhysicalDims = batchImages[0]?.widthMm > 0;
     const imgWidthMm = hasPhysicalDims ? batchImages[0].widthMm : 0;
     const imgHeightMm = hasPhysicalDims ? batchImages[0].heightMm : 0;
 
@@ -63,21 +79,40 @@ const Index = () => {
       ? `width: ${imgWidthMm}mm !important; height: ${imgHeightMm}mm !important;`
       : 'max-width: 100%; height: auto;';
 
+    // Label formats: one barcode per label page. A4: grid layout.
+    const cellsHtml = batchImages.map(img =>
+      `<div class="cell"><img src="${sanitizeDataUrl(img.dataUrl)}" /><span>${escapeHtml(img.value)}</span></div>`
+    ).join('');
+
+    const layoutCSS = isLabelFormat
+      ? `
+        .grid { display: block; }
+        .cell {
+          display: flex; flex-direction: column; align-items: center; justify-content: center;
+          padding: 0; break-after: page;
+          width: ${printFormat.widthMm - 2 * printFormat.marginMm}mm;
+          height: ${printFormat.heightMm - 2 * printFormat.marginMm}mm;
+        }
+        .cell:last-child { break-after: auto; }
+      `
+      : `
+        .grid { display: flex; flex-wrap: wrap; gap: 20px; justify-content: center; }
+        .cell { display: flex; flex-direction: column; align-items: center; break-inside: avoid; padding: 10px; }
+      `;
+
     printWindow.document.write(`<!DOCTYPE html><html><head><title>Batch Barcodes</title><style>
+      ${pageCSS}
       * { margin: 0; padding: 0; box-sizing: border-box; }
-      body { font-family: monospace; padding: 15mm; }
-      .grid { display: flex; flex-wrap: wrap; gap: 20px; justify-content: center; }
-      .cell { display: flex; flex-direction: column; align-items: center; break-inside: avoid; padding: 10px; }
+      body { font-family: monospace; ${isLabelFormat ? '' : 'padding: 15mm;'} }
+      ${layoutCSS}
       .cell img { ${imgStyle} image-rendering: crisp-edges; image-rendering: pixelated; }
-      .cell span { margin-top: 8px; font-size: 13px; font-family: 'Courier New', monospace; color: #000; font-weight: 600; letter-spacing: 0.05em; }
+      .cell span { margin-top: ${isLabelFormat ? '2' : '8'}px; font-size: ${isLabelFormat ? '10' : '13'}px; font-family: 'Courier New', monospace; color: #000; font-weight: 600; letter-spacing: 0.05em; }
       @media print {
-        body { padding: 10mm; }
-        .cell { break-inside: avoid; }
+        ${isLabelFormat ? '' : 'body { padding: 10mm; }'}
+        .cell { ${isLabelFormat ? '' : 'break-inside: avoid;'} }
         .cell img { ${imgStylePrint} print-color-adjust: exact; -webkit-print-color-adjust: exact; }
       }
-    </style></head><body><div class="grid">${
-      batchImages.map(img => `<div class="cell"><img src="${sanitizeDataUrl(img.dataUrl)}" /><span>${escapeHtml(img.value)}</span></div>`).join('')
-    }</div><script>
+    </style></head><body><div class="grid">${cellsHtml}</div><script>
       window.addEventListener('afterprint', function() { window.close(); });
       const imgs = document.querySelectorAll('img');
       let loaded = 0;
@@ -85,7 +120,7 @@ const Index = () => {
       if(loaded >= imgs.length) window.print();
     </script></body></html>`);
     printWindow.document.close();
-  }, [batchImages]);
+  }, [batchImages, config.dpi]);
 
   return (
     <div className="min-h-screen bg-background grid-pattern">

@@ -54,9 +54,10 @@ describe('BarcodeExportActions', () => {
     expect(onDownload).toHaveBeenCalledOnce();
   });
 
-  it('calls onPrint when Print is clicked', () => {
+  it('renders Print as a dropdown trigger button', () => {
     render(<BarcodeExportActions disabled={false} onDownload={onDownload} onCopy={onCopy} onPrint={onPrint} />);
-    fireEvent.click(screen.getByText('Print'));
-    expect(onPrint).toHaveBeenCalledOnce();
+    const printBtn = screen.getByText('Print').closest('button');
+    expect(printBtn).toBeInTheDocument();
+    expect(printBtn).not.toBeDisabled();
   });
 });

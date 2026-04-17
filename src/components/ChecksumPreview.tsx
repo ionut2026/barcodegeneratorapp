@@ -1,8 +1,15 @@
 import { useEffect, useRef, useMemo, useCallback } from 'react';
 import JsBarcode from 'jsbarcode';
-import { AlertCircle, Calculator, Printer } from 'lucide-react';
+import { AlertCircle, Calculator, Printer, ChevronDown } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { PRINT_FORMATS, PrintFormatId, PRINT_FORMAT_REGISTRY, checkBarcodeFit, generatePageCSS } from '@/lib/printFormats';
 import { toast } from 'sonner';
 
 interface ChecksumVariant {
@@ -66,12 +73,16 @@ export function ChecksumPreview({ variants, inputValue, widthMils = 7.5, dpi = 3
   // Compute bar width from physical config — same formula as the Generate screen
   const modulePixels = Math.max(1, Math.round(widthMils * dpi / 1000));
 
-  const printChecksums = useCallback(() => {
+  const printChecksums = useCallback((formatId: PrintFormatId) => {
     if (applicable.length === 0) return;
+
+    const printFormat = PRINT_FORMAT_REGISTRY[formatId];
+    const pageCSS = generatePageCSS(printFormat);
+    const isLabelFormat = formatId !== 'a4-page';
 
     // Pre-render each barcode SVG using the bundled JsBarcode (no CDN dependency)
     // and stamp physical mm dimensions on each SVG — same approach as BarcodePreview.tsx.
-    type RenderedCard = { name: string; fullValue: string; svgContent: string; widthMm: number; heightMm: number };
+    type RenderedCard = { name: string; fullValue: string; svgContent: string; widthMm: number; heightMm: number; widthPx: number; heightPx: number };
     const renderedCards: RenderedCard[] = [];
 
     for (const v of applicable) {
@@ -102,6 +113,8 @@ export function ChecksumPreview({ variants, inputValue, widthMils = 7.5, dpi = 3
           svgContent: new XMLSerializer().serializeToString(tempSvg),
           widthMm: wMm,
           heightMm: hMm,
+          widthPx: svgWidthPx,
+          heightPx: svgHeightPx,
         });
       } catch {
         // skip barcodes that fail to render
@@ -111,6 +124,18 @@ export function ChecksumPreview({ variants, inputValue, widthMils = 7.5, dpi = 3
     if (renderedCards.length === 0) {
       toast.error('Failed to render barcodes for print.');
       return;
+    }
+
+    // Overflow check for label formats — use the widest barcode
+    if (isLabelFormat) {
+      const widest = renderedCards.reduce((a, b) => a.widthPx > b.widthPx ? a : b);
+      const fit = checkBarcodeFit(widest.widthPx, widest.heightPx, dpi, printFormat);
+      if (!fit.fits) {
+        toast.warning(
+          `Barcode "${widest.name}" (${fit.barcodeWidthMm.toFixed(1)} \u00d7 ${fit.barcodeHeightMm.toFixed(1)} mm) exceeds ${printFormat.label} printable area (${fit.printableWidthMm.toFixed(1)} \u00d7 ${fit.printableHeightMm.toFixed(1)} mm). Reduce bar width to fit.`
+        );
+        return;
+      }
     }
 
     const printWindow = window.open('', '', 'width=800,height=600');
@@ -125,20 +150,35 @@ export function ChecksumPreview({ variants, inputValue, widthMils = 7.5, dpi = 3
       </div>
     `).join('');
 
-    printWindow.document.write(`<!DOCTYPE html><html><head><title>Checksum Barcodes</title>
-      <style>
-        @page { size: auto; margin: 10mm; }
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: monospace; padding: 15mm; background: white; }
+    const layoutCSS = isLabelFormat
+      ? `
+        .grid { display: block; }
+        .cell {
+          display: flex; flex-direction: column; align-items: center; justify-content: center;
+          padding: 0; border: none; break-after: page;
+          width: ${printFormat.widthMm - 2 * printFormat.marginMm}mm;
+          height: ${printFormat.heightMm - 2 * printFormat.marginMm}mm;
+        }
+        .cell:last-child { break-after: auto; }
+      `
+      : `
         .grid { display: flex; flex-wrap: wrap; gap: 20px; justify-content: center; }
         .cell { display: flex; flex-direction: column; align-items: center; break-inside: avoid; padding: 10px; border: 1px solid #eee; border-radius: 8px; }
+      `;
+
+    printWindow.document.write(`<!DOCTYPE html><html><head><title>Checksum Barcodes</title>
+      <style>
+        ${pageCSS}
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: monospace; ${isLabelFormat ? '' : 'padding: 15mm;'} background: white; }
+        ${layoutCSS}
         .label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; color: #666; margin-bottom: 6px; }
         .barcode { display: flex; justify-content: center; }
         .barcode svg { display: block; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-        .value { margin-top: 6px; font-size: 13px; font-family: 'Courier New', monospace; color: #000; font-weight: 600; letter-spacing: 0.05em; }
-        .dims { margin-top: 3px; font-size: 10px; color: #888; font-family: monospace; }
+        .value { margin-top: 6px; font-size: ${isLabelFormat ? '10' : '13'}px; font-family: 'Courier New', monospace; color: #000; font-weight: 600; letter-spacing: 0.05em; }
+        .dims { margin-top: 3px; font-size: ${isLabelFormat ? '8' : '10'}px; color: #888; font-family: monospace; }
         .print-note { text-align: center; font-size: 9pt; color: #888; margin-top: 15mm; font-family: monospace; }
-        @media print { .print-note { display: none; } .cell { break-inside: avoid; } }
+        @media print { .print-note { display: none; } .cell { ${isLabelFormat ? '' : 'break-inside: avoid;'} } }
       </style></head>
       <body>
         <div class="grid">${cards}</div>
@@ -185,14 +225,28 @@ export function ChecksumPreview({ variants, inputValue, widthMils = 7.5, dpi = 3
         <div className="flex items-center gap-3">
           <span className="text-xs font-mono text-muted-foreground">{applicable.length} variants</span>
           {applicable.length > 0 && (
-            <Button
-              size="sm"
-              onClick={printChecksums}
-              className="gap-2 rounded-xl h-10 px-4 download-btn text-white font-medium"
-            >
-              <Printer className="h-4 w-4" />
-              Print
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  size="sm"
+                  className="gap-2 rounded-xl h-10 px-4 download-btn text-white font-medium"
+                >
+                  <Printer className="h-4 w-4" />
+                  Print
+                  <ChevronDown className="h-3 w-3 ml-0.5 opacity-70" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                {PRINT_FORMATS.map((f) => (
+                  <DropdownMenuItem key={f.id} onClick={() => printChecksums(f.id)}>
+                    <div className="flex flex-col">
+                      <span className="font-medium">{f.label}</span>
+                      <span className="text-xs text-muted-foreground">{f.description}</span>
+                    </div>
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
           )}
         </div>
       </div>
