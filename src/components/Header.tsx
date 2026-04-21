@@ -1,10 +1,12 @@
-import { ScanBarcode, Moon, Sun, ScanLine } from 'lucide-react';
+import { ScanBarcode, Moon, Sun, ScanLine, Info } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
+import { AboutDialog } from '@/components/AboutDialog';
 
 export function Header() {
   const [isDark, setIsDark] = useState(true);
+  const [aboutOpen, setAboutOpen] = useState(false);
   const location = useLocation();
   const isAnalyzer = location.pathname === '/analyzer';
 
@@ -12,6 +14,16 @@ export function Header() {
     // Check initial theme
     const isDarkMode = document.documentElement.classList.contains('dark');
     setIsDark(isDarkMode);
+  }, []);
+
+  // When running under Electron, the native Help > About menu pushes a
+  // 'menu-open-about' IPC event; subscribe so the menu click opens the same
+  // React dialog as the in-app button. In the browser this no-ops.
+  useEffect(() => {
+    const unsubscribe = window.electronAPI?.onOpenAbout?.(() => setAboutOpen(true));
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
   }, []);
 
   const toggleTheme = () => {
@@ -61,6 +73,15 @@ export function Header() {
             <Button
               variant="outline"
               size="icon"
+              onClick={() => setAboutOpen(true)}
+              className="h-10 w-10 rounded-xl border-border/50 bg-secondary/50 hover:bg-secondary/80"
+              aria-label="About"
+            >
+              <Info className="h-5 w-5 text-primary" />
+            </Button>
+            <Button
+              variant="outline"
+              size="icon"
               onClick={toggleTheme}
               className="theme-toggle h-10 w-10 rounded-xl border-border/50 bg-secondary/50 hover:bg-secondary/80"
               aria-label="Toggle theme"
@@ -74,6 +95,7 @@ export function Header() {
           </div>
         </div>
       </div>
+      <AboutDialog open={aboutOpen} onOpenChange={setAboutOpen} />
     </header>
   );
 }

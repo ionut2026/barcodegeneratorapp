@@ -1,0 +1,104 @@
+Barcode Generator — Third-Party Notices
+========================================
+
+This product includes software developed by third parties. The following
+components are redistributed under their respective licenses. A copy of each
+license is available in the source package of the respective library, or at
+the URL listed below.
+
+This file is shipped as a plain-text resource alongside the application so it
+can be updated without recompiling the app.
+
+----------------------------------------------------------------------------
+1. React
+   License:  MIT
+   Copyright (c) Meta Platforms, Inc. and affiliates.
+   https://github.com/facebook/react/blob/main/LICENSE
+
+2. React DOM
+   License:  MIT
+   Copyright (c) Meta Platforms, Inc. and affiliates.
+   https://github.com/facebook/react/blob/main/LICENSE
+
+3. Vite
+   License:  MIT
+   Copyright (c) 2019-present, Yuxi (Evan) You and Vite contributors
+   https://github.com/vitejs/vite/blob/main/LICENSE
+
+4. Electron
+   License:  MIT
+   Copyright (c) Electron contributors
+   Copyright (c) 2013-2020 GitHub Inc.
+   https://github.com/electron/electron/blob/main/LICENSE
+
+5. JsBarcode
+   License:  MIT
+   Copyright (c) 2016 Johan Lindell
+   https://github.com/lindell/JsBarcode/blob/master/MIT-LICENSE.txt
+
+6. bwip-js
+   License:  MIT
+   Copyright (c) 2011-2024 Mark Warren
+   https://github.com/metafloor/bwip-js/blob/master/LICENSE
+
+7. ZXing for JS (@zxing/library, @zxing/browser)
+   License:  Apache-2.0
+   Copyright 2016 ZXing authors
+   https://github.com/zxing-js/library/blob/master/LICENSE
+
+8. jsPDF
+   License:  MIT
+   Copyright (c) 2010-2021 James Hall
+   https://github.com/parallax/jsPDF/blob/master/LICENSE
+
+9. JSZip
+   License:  MIT OR GPL-3.0-or-later
+   Copyright (c) 2009-2016 Stuart Knightley, David Duponchel, Franz Buchinger, Antonio Afonso
+   https://github.com/Stuk/jszip/blob/main/LICENSE.markdown
+
+10. FileSaver.js
+    License:  MIT
+    Copyright (c) 2016 Eli Grey
+    https://github.com/eligrey/FileSaver.js/blob/master/LICENSE.md
+
+11. Radix UI Primitives
+    License:  MIT
+    Copyright (c) 2022 WorkOS
+    https://github.com/radix-ui/primitives/blob/main/LICENSE
+
+12. Tailwind CSS
+    License:  MIT
+    Copyright (c) Tailwind Labs, Inc.
+    https://github.com/tailwindlabs/tailwindcss/blob/main/LICENSE
+
+13. Lucide Icons (lucide-react)
+    License:  ISC
+    Copyright (c) 2022 Lucide Contributors
+    https://github.com/lucide-icons/lucide/blob/main/LICENSE
+
+14. TanStack Query (@tanstack/react-query)
+    License:  MIT
+    Copyright (c) 2021-present Tanner Linsley
+    https://github.com/TanStack/query/blob/main/LICENSE
+
+15. React Router (react-router-dom)
+    License:  MIT
+    Copyright (c) React Training LLC 2015-2019
+    Copyright (c) Remix Software Inc. 2020-2021
+    https://github.com/remix-run/react-router/blob/main/LICENSE.md
+
+16. Sonner
+    License:  MIT
+    Copyright (c) 2023 Emil Kowalski
+    https://github.com/emilkowalski/sonner/blob/main/LICENSE.md
+
+17. class-variance-authority, clsx, tailwind-merge
+    License:  MIT
+
+----------------------------------------------------------------------------
+
+Full license texts are embedded in each library's source distribution within
+node_modules. This notice fulfils the attribution requirement of the MIT,
+Apache-2.0, and ISC licenses listed above.
+
+Last updated: 2026

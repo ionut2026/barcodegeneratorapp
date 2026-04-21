@@ -1,7 +1,37 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain, shell } = require('electron');
 const path = require('path');
 
 let mainWindow;
+
+function buildApplicationMenu() {
+  // Native menu with a Help > About entry. Clicking it pushes a
+  // `menu-open-about` IPC message to the renderer, which opens the React
+  // AboutDialog. Keeping the UI in React (rather than a separate BrowserWindow)
+  // means the dialog inherits the app's theme and styling for free.
+  const isMac = process.platform === 'darwin';
+  const template = [
+    ...(isMac ? [{ role: 'appMenu' }] : []),
+    { role: 'fileMenu' },
+    { role: 'editMenu' },
+    { role: 'viewMenu' },
+    { role: 'windowMenu' },
+    {
+      role: 'help',
+      submenu: [
+        {
+          label: 'About Barcode Generator',
+          click: () => {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('menu-open-about');
+            }
+          },
+        },
+      ],
+    },
+  ];
+
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -15,6 +45,8 @@ function createWindow() {
     }
   });
 
+  buildApplicationMenu();
+
   // Load your app
   if (process.env.NODE_ENV === 'development') {
     mainWindow.loadURL('http://localhost:5173');
@@ -22,10 +54,16 @@ function createWindow() {
     mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
   }
 
-  // Allow print dialog
+  // Route external links (e.g., the website URL in the About dialog) to the
+  // user's default browser instead of opening them inside a new Electron
+  // window.
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith('about:')) {
       return { action: 'allow' };
+    }
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      shell.openExternal(url);
+      return { action: 'deny' };
     }
     return { action: 'deny' };
   });

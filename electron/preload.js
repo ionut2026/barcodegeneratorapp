@@ -5,4 +5,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/')) return;
     ipcRenderer.send('print-barcode', dataUrl, dims || null);
   },
+  // Subscribe to the Help > About menu click dispatched from the main process.
+  // Returns an unsubscribe function so React effects can clean up on unmount.
+  onOpenAbout: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on('menu-open-about', listener);
+    return () => ipcRenderer.removeListener('menu-open-about', listener);
+  },
 });

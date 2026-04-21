@@ -16,6 +16,7 @@ declare global {
           labelMarginMm?: number;
         },
       ) => void;
+      onOpenAbout?: (callback: () => void) => () => void;
     };
   }
 }
