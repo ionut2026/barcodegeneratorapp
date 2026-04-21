@@ -40,7 +40,10 @@
       "Bash(ps -W)",
       "Bash(NODE_ENV=development npx electron *)",
       "Bash(awk '{print $2}')",
-      "Bash(xargs -r -I{} taskkill //PID {} //F)"
+      "Bash(xargs -r -I{} taskkill //PID {} //F)",
+      "Bash(ssh *)",
+      "Bash(ssh-keygen -lf ~/.ssh/id_ed25519_stratecssh.pub)",
+      "Bash(ssh-keygen -lf ~/.ssh/id_ed25519.pub)"
     ]
   }
 }
