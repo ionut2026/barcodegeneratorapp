@@ -27,7 +27,7 @@ export interface AboutDialogProps {
   loadLicense?: () => Promise<string>;
 }
 
-const WEBSITE_URL = 'https://github.com/ionu87/barcodegeneratorapp';
+const WEBSITE_URL = 'https://github.com/STRATECSE/barcodegeneratorapp';
 const LICENSEE = 'Licensed User';
 const LICENSE_TYPE: 'Pro' | 'Trial' | 'Free' = 'Free';
 
@@ -78,6 +78,11 @@ export function AboutDialog({
   const version = __APP_VERSION__;
   const appName = __APP_NAME__;
   const copyrightYear = new Date().getFullYear();
+  // Full build string: "1.0.0.227" (commit count) with the short SHA surfaced
+  // separately so it can be copied into bug reports without dragging the full
+  // version along. __APP_BUILD__ auto-increments on every Vite build.
+  const fullVersion = __APP_BUILD__ ? `${version}.${__APP_BUILD__}` : version;
+  const commit = __APP_COMMIT__;
 
   const handleWebsite = (e: React.MouseEvent<HTMLAnchorElement>) => {
     // In Electron, window.open is blocked by setWindowOpenHandler unless the
@@ -106,7 +111,8 @@ export function AboutDialog({
                 <span className="gradient-text">{appName}</span>
               </DialogTitle>
               <DialogDescription className="font-mono text-xs">
-                Version {version}
+                Version {fullVersion}
+                {commit && <span className="text-muted-foreground/70"> &middot; {commit}</span>}
               </DialogDescription>
             </DialogHeader>
 
@@ -167,7 +173,7 @@ export function AboutDialog({
             <DialogHeader>
               <DialogTitle>License Agreement</DialogTitle>
               <DialogDescription>
-                {appName} v{version}
+                {appName} v{fullVersion}
               </DialogDescription>
             </DialogHeader>
             <ScrollArea className="h-80 rounded-md border border-border/50 bg-secondary/30 p-3">
