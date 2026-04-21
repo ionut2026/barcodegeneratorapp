@@ -34,7 +34,13 @@
       "Bash(git branch:*)",
       "Bash(python -c \"from reportlab.lib.units import mm; print\\(f''1mm = {mm} pts''\\); print\\(f''A4: {210*mm:.1f} x {297*mm:.1f} pts''\\)\")",
       "Bash(python -c \":*)",
-      "Bash(node_modules/.bin/tsc --noEmit)"
+      "Bash(node_modules/.bin/tsc --noEmit)",
+      "Bash(netstat -ano)",
+      "Bash(tasklist)",
+      "Bash(ps -W)",
+      "Bash(NODE_ENV=development npx electron *)",
+      "Bash(awk '{print $2}')",
+      "Bash(xargs -r -I{} taskkill //PID {} //F)"
     ]
   }
 }

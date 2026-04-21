@@ -17,6 +17,10 @@ declare global {
         },
       ) => void;
       onOpenAbout?: (callback: () => void) => () => void;
+      openPdf?: (
+        base64: string,
+        fileName?: string,
+      ) => Promise<{ ok: true; path: string } | { ok: false; error: string }>;
     };
   }
 }

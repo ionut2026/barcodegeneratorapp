@@ -240,7 +240,25 @@ export async function generatePrintPdf(
     }
   }
 
-  // Open PDF in a new tab for print preview
+  // Hand the PDF off for preview. In packaged Electron builds (file:// origin)
+  // blob: URLs cannot reliably be opened in a new BrowserWindow, so we write
+  // the bytes to a temp file via IPC and let the OS default PDF viewer
+  // handle it — the user gets a familiar Ctrl+P dialog. In the browser we
+  // fall back to window.open(blob:) which opens a tab.
+  const openPdf = typeof window !== 'undefined' ? window.electronAPI?.openPdf : undefined;
+  if (openPdf) {
+    const base64 = pdf.output('datauristring').split(',')[1] ?? '';
+    const fileName = `barcode-${Date.now()}.pdf`;
+    const result = await openPdf(base64, fileName);
+    if (!result.ok) {
+      // Surface the failure to callers so they can toast; no fallback to
+      // window.open here because on file:// origin that path is the one we
+      // are specifically working around.
+      throw new Error(`Failed to open PDF: ${result.error}`);
+    }
+    return;
+  }
+
   const pdfBlob = pdf.output('blob');
   const url = URL.createObjectURL(pdfBlob);
   window.open(url, '_blank');

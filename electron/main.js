@@ -1,5 +1,7 @@
 const { app, BrowserWindow, Menu, ipcMain, shell } = require('electron');
 const path = require('path');
+const fs = require('fs');
+const os = require('os');
 
 let mainWindow;
 
@@ -56,10 +58,20 @@ function createWindow() {
 
   // Route external links (e.g., the website URL in the About dialog) to the
   // user's default browser instead of opening them inside a new Electron
-  // window.
+  // window. Allow blob: URLs so the print flow — which generates a PDF via
+  // jsPDF and opens it with window.open(blobUrl) — can display the PDF in a
+  // native Electron window (Chromium's built-in PDF viewer handles rendering).
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith('about:')) {
-      return { action: 'allow' };
+    if (url.startsWith('about:') || url.startsWith('blob:')) {
+      return {
+        action: 'allow',
+        overrideBrowserWindowOptions: {
+          width: 900,
+          height: 1000,
+          autoHideMenuBar: true,
+          title: 'Print Preview',
+        },
+      };
     }
     if (url.startsWith('http://') || url.startsWith('https://')) {
       shell.openExternal(url);
@@ -234,6 +246,50 @@ ipcMain.on('print-barcode', (event, imageDataUrl, dims) => {
   printWindow.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(printHTML));
   printWindow.setMenuBarVisibility(false);
   printWindow.on('closed', () => {});
+});
+
+// Open a PDF generated in the renderer inside an Electron BrowserWindow
+// (Chromium's built-in PDF viewer). The user sees the barcode(s) in the
+// preview and triggers printing via the viewer's toolbar print button,
+// which opens the native OS print dialog. No extra dialog is fired here
+// — keeping the interaction to a single, expected step.
+ipcMain.handle('open-pdf', async (_event, payload) => {
+  try {
+    if (!payload || typeof payload.base64 !== 'string' || payload.base64.length === 0) {
+      return { ok: false, error: 'invalid payload' };
+    }
+    // Guardrail against pathological payloads. 64 MiB is well above anything
+    // the barcode print flow produces (typical PDFs are tens of KB).
+    if (payload.base64.length > 64 * 1024 * 1024) {
+      return { ok: false, error: 'payload too large' };
+    }
+    const safeName = typeof payload.fileName === 'string' && /^[\w.\- ]{1,80}$/.test(payload.fileName)
+      ? payload.fileName
+      : `barcode-${Date.now()}.pdf`;
+    const tmpDir = path.join(os.tmpdir(), 'barcode-generator');
+    fs.mkdirSync(tmpDir, { recursive: true });
+    const filePath = path.join(tmpDir, safeName);
+    fs.writeFileSync(filePath, Buffer.from(payload.base64, 'base64'));
+
+    const printWindow = new BrowserWindow({
+      width: 900,
+      height: 1000,
+      autoHideMenuBar: true,
+      title: 'Print Preview - Barcode',
+      backgroundColor: '#525659',
+      webPreferences: {
+        nodeIntegration: false,
+        contextIsolation: true,
+        // plugins: true lets Chromium's bundled PDF viewer render the file.
+        plugins: true,
+      },
+    });
+
+    await printWindow.loadFile(filePath);
+    return { ok: true, path: filePath };
+  } catch (err) {
+    return { ok: false, error: err && err.message ? err.message : String(err) };
+  }
 });
 
 app.whenReady().then(createWindow);
