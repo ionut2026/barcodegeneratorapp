@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "Barcode Generator Desktop App",
   "main": "electron/main.js",
-  "author": "Ionut",
+  "author": "Ionut Pop",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
