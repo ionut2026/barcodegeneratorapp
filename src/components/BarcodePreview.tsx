@@ -42,53 +42,10 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
   const snap = useMemo(() => snapToPixelGrid(config.widthMils, config.dpi), [config.widthMils, config.dpi]);
 
   const downloadBarcode = async () => {
-    // 1D barcode, no effects: download as SVG for perfect vector/physical dimensions.
-    if (!is2D && !effects.enableEffects) {
-      const renderText = normalizeForRendering(barcodeText, config.format);
-      const tempSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-      try {
-        JsBarcode(tempSvg, renderText, {
-          format: config.format,
-          width: modulePixels,
-          height: config.height,
-          displayValue: config.displayValue,
-          fontSize: config.fontSize,
-          lineColor: config.lineColor,
-          background: config.background,
-          margin: config.margin,
-          font: 'Courier',
-          textMargin: 2,
-        });
-        snapSvgToPixels(tempSvg);
-        const svgWidthPx = parseFloat(tempSvg.getAttribute('width') || '0');
-        const svgHeightPx = parseFloat(tempSvg.getAttribute('height') || '0');
-        if (!svgWidthPx || !svgHeightPx) throw new Error('SVG rendered without dimensions');
-
-        const wMm = +(svgWidthPx * 25.4 / config.dpi).toFixed(2);
-        const hMm = +(svgHeightPx * 25.4 / config.dpi).toFixed(2);
-        tempSvg.setAttribute('viewBox', `0 0 ${svgWidthPx} ${svgHeightPx}`);
-        tempSvg.setAttribute('width', `${wMm}mm`);
-        tempSvg.setAttribute('height', `${hMm}mm`);
-
-        const svgData = new XMLSerializer().serializeToString(tempSvg);
-        const blob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.download = `barcode-${config.format}-${barcodeText}.svg`;
-        link.href = url;
-        link.click();
-        URL.revokeObjectURL(url);
-
-        const actualMils = ((modulePixels * 1000) / config.dpi).toFixed(1);
-        toast.success(`Downloaded: ${wMm} × ${hMm} mm · ${actualMils} mil module (SVG vector)`);
-      } catch (e) {
-        toast.error('Failed to generate SVG for download');
-      }
-      return;
-    }
-
-    // 2D barcode, or 1D with effects enabled: export as PNG with embedded DPI metadata.
-    // Effects are raster operations that cannot be applied to SVG.
+    // Always export as PNG. For 1D barcodes the source render goes through
+    // a pixel-snapped SVG inside renderExportCanvas() so the PNG remains
+    // crisp at the configured DPI; for 2D and effects-enabled flows the
+    // canvas is already a raster.
     const exportCanvas = await renderExportCanvas();
     if (!exportCanvas) { toast.error('Failed to render barcode for download'); return; }
 
