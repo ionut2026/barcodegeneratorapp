@@ -247,9 +247,12 @@ export async function generatePrintPdf(
   // fall back to window.open(blob:) which opens a tab.
   const openPdf = typeof window !== 'undefined' ? window.electronAPI?.openPdf : undefined;
   if (openPdf) {
-    const base64 = pdf.output('datauristring').split(',')[1] ?? '';
+    // Send raw bytes via structured clone instead of base64. Avoids a base64
+    // encode in jsPDF, a ~33% inflated IPC payload, and a base64 decode in
+    // the main process — measurably faster on multi-page batch prints.
+    const bytes = new Uint8Array(pdf.output('arraybuffer'));
     const fileName = `barcode-${Date.now()}.pdf`;
-    const result = await openPdf(base64, fileName);
+    const result = await openPdf(bytes, fileName);
     if (!result.ok) {
       // Surface the failure to callers so they can toast; no fallback to
       // window.open here because on file:// origin that path is the one we

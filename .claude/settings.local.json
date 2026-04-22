@@ -43,7 +43,9 @@
       "Bash(xargs -r -I{} taskkill //PID {} //F)",
       "Bash(ssh *)",
       "Bash(ssh-keygen -lf ~/.ssh/id_ed25519_stratecssh.pub)",
-      "Bash(ssh-keygen -lf ~/.ssh/id_ed25519.pub)"
+      "Bash(ssh-keygen -lf ~/.ssh/id_ed25519.pub)",
+      "Bash(tasklist //FI \"IMAGENAME eq Barcode Generator.exe\")",
+      "Bash(tasklist //FI \"IMAGENAME eq electron.exe\")"
     ]
   }
 }

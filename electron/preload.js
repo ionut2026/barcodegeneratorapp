@@ -12,13 +12,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('menu-open-about', listener);
     return () => ipcRenderer.removeListener('menu-open-about', listener);
   },
-  // Persist a renderer-generated PDF to a temp file and open it with the OS
-  // default PDF viewer. Used by the print flow in packaged builds where blob:
-  // URLs cannot be opened into new BrowserWindows.
-  openPdf: (base64, fileName) => {
-    if (typeof base64 !== 'string' || base64.length === 0) {
+  // Persist a renderer-generated PDF to a temp file and open it in an
+  // Electron BrowserWindow running Chromium's built-in PDF viewer. Accepts
+  // raw bytes (Uint8Array/ArrayBuffer) — structured-cloned over IPC without
+  // a base64 round-trip for faster preview load.
+  openPdf: (bytes, fileName) => {
+    const byteLength = bytes && (bytes.byteLength ?? bytes.length);
+    if (!byteLength) {
       return Promise.resolve({ ok: false, error: 'invalid payload' });
     }
-    return ipcRenderer.invoke('open-pdf', { base64, fileName });
+    return ipcRenderer.invoke('open-pdf', { bytes, fileName });
   },
 });

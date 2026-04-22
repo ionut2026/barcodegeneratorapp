@@ -248,6 +248,23 @@ ipcMain.on('print-barcode', (event, imageDataUrl, dims) => {
   printWindow.on('closed', () => {});
 });
 
+// Prune stale PDFs left behind by prior previews. Fire-and-forget; errors
+// are swallowed because cleanup must never delay the user-visible path.
+async function pruneOldPdfs(dir, maxAgeMs) {
+  try {
+    const entries = await fs.promises.readdir(dir);
+    const cutoff = Date.now() - maxAgeMs;
+    await Promise.all(entries.map(async (name) => {
+      if (!name.toLowerCase().endsWith('.pdf')) return;
+      const full = path.join(dir, name);
+      try {
+        const stat = await fs.promises.stat(full);
+        if (stat.mtimeMs < cutoff) await fs.promises.unlink(full);
+      } catch {}
+    }));
+  } catch {}
+}
+
 // Open a PDF generated in the renderer inside an Electron BrowserWindow
 // (Chromium's built-in PDF viewer). The user sees the barcode(s) in the
 // preview and triggers printing via the viewer's toolbar print button,
@@ -255,25 +272,40 @@ ipcMain.on('print-barcode', (event, imageDataUrl, dims) => {
 // — keeping the interaction to a single, expected step.
 ipcMain.handle('open-pdf', async (_event, payload) => {
   try {
-    if (!payload || typeof payload.base64 !== 'string' || payload.base64.length === 0) {
+    const raw = payload && payload.bytes;
+    // Accept Uint8Array (typical) or ArrayBuffer. Legacy base64 string is
+    // still honoured so an older preload.js can't break the flow.
+    let buf;
+    if (raw && raw.byteLength) {
+      buf = Buffer.from(raw.buffer ?? raw, raw.byteOffset ?? 0, raw.byteLength);
+    } else if (payload && typeof payload.base64 === 'string' && payload.base64.length > 0) {
+      buf = Buffer.from(payload.base64, 'base64');
+    } else {
       return { ok: false, error: 'invalid payload' };
     }
     // Guardrail against pathological payloads. 64 MiB is well above anything
     // the barcode print flow produces (typical PDFs are tens of KB).
-    if (payload.base64.length > 64 * 1024 * 1024) {
+    if (buf.byteLength > 64 * 1024 * 1024) {
       return { ok: false, error: 'payload too large' };
     }
     const safeName = typeof payload.fileName === 'string' && /^[\w.\- ]{1,80}$/.test(payload.fileName)
       ? payload.fileName
       : `barcode-${Date.now()}.pdf`;
     const tmpDir = path.join(os.tmpdir(), 'barcode-generator');
-    fs.mkdirSync(tmpDir, { recursive: true });
+    await fs.promises.mkdir(tmpDir, { recursive: true });
     const filePath = path.join(tmpDir, safeName);
-    fs.writeFileSync(filePath, Buffer.from(payload.base64, 'base64'));
+    await fs.promises.writeFile(filePath, buf);
+
+    // Opportunistic cleanup of previews older than an hour — keeps the temp
+    // dir from accumulating forever without blocking this request.
+    pruneOldPdfs(tmpDir, 60 * 60 * 1000);
 
     const printWindow = new BrowserWindow({
       width: 900,
       height: 1000,
+      // Defer first paint until Chromium's PDF viewer is ready, which
+      // eliminates the flash of empty window users currently see.
+      show: false,
       autoHideMenuBar: true,
       title: 'Print Preview - Barcode',
       backgroundColor: '#525659',
@@ -282,7 +314,11 @@ ipcMain.handle('open-pdf', async (_event, payload) => {
         contextIsolation: true,
         // plugins: true lets Chromium's bundled PDF viewer render the file.
         plugins: true,
+        backgroundThrottling: false,
       },
+    });
+    printWindow.once('ready-to-show', () => {
+      if (!printWindow.isDestroyed()) printWindow.show();
     });
 
     await printWindow.loadFile(filePath);
