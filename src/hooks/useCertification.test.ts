@@ -113,4 +113,42 @@ describe('useCertification', () => {
     const { result } = renderHook(() => useCertification(config, true));
     expect(() => result.current.downloadCertificate()).not.toThrow();
   });
+
+  it('does NOT re-certify when only cosmetic config fields change (regression for H4)', async () => {
+    let config = { ...getDefaultConfig(), text: 'HELLO' };
+    const { result, rerender } = renderHook(
+      ({ cfg }) => useCertification(cfg, true),
+      { initialProps: { cfg: config } },
+    );
+    act(() => { result.current.setCertEnabled(true); });
+    await act(async () => { vi.advanceTimersByTime(700); });
+    expect(mockCertify).toHaveBeenCalledOnce();
+
+    // Change a cosmetic field that has no effect on what ZXing would decode.
+    config = { ...config, lineColor: '#ff0000', background: '#000000', fontSize: 99, margin: 50, displayValue: false };
+    rerender({ cfg: config });
+    await act(async () => { vi.advanceTimersByTime(1000); });
+    expect(mockCertify).toHaveBeenCalledOnce(); // still only the original call
+  });
+
+  it('DOES re-certify when grade-affecting fields change (widthMils, dpi)', async () => {
+    let config = { ...getDefaultConfig(), text: 'HELLO' };
+    const { result, rerender } = renderHook(
+      ({ cfg }) => useCertification(cfg, true),
+      { initialProps: { cfg: config } },
+    );
+    act(() => { result.current.setCertEnabled(true); });
+    await act(async () => { vi.advanceTimersByTime(700); });
+    expect(mockCertify).toHaveBeenCalledTimes(1);
+
+    config = { ...config, widthMils: 10 };
+    rerender({ cfg: config });
+    await act(async () => { vi.advanceTimersByTime(700); });
+    expect(mockCertify).toHaveBeenCalledTimes(2);
+
+    config = { ...config, dpi: 600 };
+    rerender({ cfg: config });
+    await act(async () => { vi.advanceTimersByTime(700); });
+    expect(mockCertify).toHaveBeenCalledTimes(3);
+  });
 });

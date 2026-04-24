@@ -231,3 +231,26 @@ describe('analyzeBarcode with URL "https://example.com"', () => {
     }
   });
 });
+
+// Regression for H1 refactor: when an optional checksum candidate throws
+// ValidationException (Strict Match miss), the analyzer must fall back to
+// 'not_applicable' rather than letting the exception escape.
+describe('analyzeBarcode optional-checksum candidate fallback (regression for H1)', () => {
+  it('CODE39 input where last char is not the Mod43 check returns not_applicable', () => {
+    // 'HELLO' Mod43 check is computed; 'HELLOZ' appends a near-arbitrary char.
+    // If 'Z' happens to be the real Mod43 check this test self-skips.
+    const real = calculateMod43Checksum('HELLO');
+    const candidate = real === 'Z' ? 'Y' : 'Z';
+    const result = analyzeBarcode('HELLO' + candidate);
+    const m = result.matches.find((x) => x.format === 'CODE39');
+    expect(m).toBeDefined();
+    expect(m?.checksumStatus).toBe('not_applicable');
+  });
+
+  it('analyzeBarcode does not throw on inputs that look like wrong optional checks', () => {
+    expect(() => analyzeBarcode('1234X')).not.toThrow();
+    expect(() => analyzeBarcode('A1234X')).not.toThrow();
+    expect(() => analyzeBarcode('999999')).not.toThrow();
+  });
+});
+

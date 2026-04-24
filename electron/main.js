@@ -81,28 +81,56 @@ function createWindow() {
   });
 }
 
+// Allow-list of label/page formats accepted from the renderer. Any value
+// outside this set is treated as null (no special @page rule).
+const ALLOWED_PRINT_FORMATS = new Set(['a4-page', 'label-100x50', 'label-40x21']);
+
+// Coerce a value to a finite number within an inclusive [min, max] range.
+// Returns 0 (the historical default) for anything else. Defence-in-depth:
+// these values are interpolated into HTML/CSS so we must reject anything
+// that could escape the surrounding context.
+function safeNumber(v, min, max) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return 0;
+  if (n < min) return min;
+  if (n > max) return max;
+  return n;
+}
+
+// Strict allow-list for the print preview img src. Only base64-encoded raster
+// images are accepted — this prevents SVG payloads (which can contain
+// </script> sequences) from breaking out of the inline <script> sink that
+// sets img.src below. JSON.stringify does not escape </, so allowing arbitrary
+// data:image/* would defeat the CSP hardening.
+const PRINT_DATA_URL_RE = /^data:image\/(png|jpeg|jpg|gif|webp);base64,[A-Za-z0-9+/=]+$/;
+
 // Handle print request with image data, physical dimensions, and print preview.
 ipcMain.on('print-barcode', (event, imageDataUrl, dims) => {
-  if (typeof imageDataUrl !== 'string' || !imageDataUrl.startsWith('data:image/')) {
+  if (typeof imageDataUrl !== 'string' || !PRINT_DATA_URL_RE.test(imageDataUrl)) {
     console.error('print-barcode: invalid data rejected');
     return;
   }
 
   // Physical dimensions from the renderer (mm).  When present the print
-  // output will match the configured X-dimension exactly.
+  // output will match the configured X-dimension exactly. All numeric fields
+  // are coerced via safeNumber() so a malformed renderer payload cannot
+  // escape the HTML/CSS context they are interpolated into below.
   const hasDims = dims && typeof dims.widthMm === 'number' && typeof dims.heightMm === 'number';
-  const widthMm  = hasDims ? dims.widthMm  : 0;
-  const heightMm = hasDims ? dims.heightMm : 0;
-  const widthPx  = hasDims ? dims.widthPx  : 0;
-  const heightPx = hasDims ? dims.heightPx : 0;
-  const dpi       = hasDims ? dims.dpi      : 0;
-  const actualMils = hasDims ? dims.actualMils : 0;
+  const widthMm    = hasDims ? safeNumber(dims.widthMm,    0, 10000) : 0;
+  const heightMm   = hasDims ? safeNumber(dims.heightMm,   0, 10000) : 0;
+  const widthPx    = hasDims ? safeNumber(dims.widthPx,    0, 100000) : 0;
+  const heightPx   = hasDims ? safeNumber(dims.heightPx,   0, 100000) : 0;
+  const dpi        = hasDims ? safeNumber(dims.dpi,        0, 10000) : 0;
+  const actualMils = hasDims ? safeNumber(dims.actualMils, 0, 100000) : 0;
 
-  // Label/page format from renderer (optional — may be absent for older callers)
-  const printFormat = dims && dims.printFormat || null;
-  const labelWidthMm = dims && dims.labelWidthMm || 0;
-  const labelHeightMm = dims && dims.labelHeightMm || 0;
-  const labelMarginMm = dims && dims.labelMarginMm || 0;
+  // Label/page format from renderer (optional — may be absent for older callers).
+  // printFormat is restricted to a known allow-list; numeric label dimensions
+  // are coerced through safeNumber() for the same reason as the dims above.
+  const rawPrintFormat = dims && typeof dims.printFormat === 'string' ? dims.printFormat : null;
+  const printFormat = rawPrintFormat && ALLOWED_PRINT_FORMATS.has(rawPrintFormat) ? rawPrintFormat : null;
+  const labelWidthMm  = dims ? safeNumber(dims.labelWidthMm,  0, 10000) : 0;
+  const labelHeightMm = dims ? safeNumber(dims.labelHeightMm, 0, 10000) : 0;
+  const labelMarginMm = dims ? safeNumber(dims.labelMarginMm, 0, 1000)  : 0;
 
   // CSS sizing: use exact mm dimensions when available, else fall back to
   // max-width so the image at least doesn't overflow the page.
@@ -138,6 +166,7 @@ ipcMain.on('print-barcode', (event, imageDataUrl, dims) => {
     <!DOCTYPE html>
     <html>
     <head>
+      <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; base-uri 'none'; form-action 'none';">
       <title>Print Preview - Barcode</title>
       <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }

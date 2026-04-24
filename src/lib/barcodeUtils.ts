@@ -26,9 +26,12 @@ export type BarcodeFormat =
   | 'datamatrix'
   | 'pdf417';
 
-// Helper to check if format is 2D
+// Helper to check if format is 2D (sourced from BARCODE_FORMATS registry below).
+// Implemented as a function call wrapping a lazy lookup so the registry stays
+// the single source of truth — adding a 2D format only requires updating
+// BARCODE_FORMATS, never this helper.
 export function is2DBarcode(format: BarcodeFormat): boolean {
-  return ['qrcode', 'azteccode', 'datamatrix', 'pdf417'].includes(format);
+  return BARCODE_FORMATS.find((f) => f.value === format)?.category === '2D';
 }
 
 export type ChecksumType = 

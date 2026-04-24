@@ -132,30 +132,85 @@ export function BatchGenerator({ onImagesGenerated, onActionsReady }: BatchGener
     onImagesGenerated?.(allImages);
   }, [batches, onImagesGenerated]);
 
-  // Re-render all batch images when output settings change
+  // Re-render all batch images when output settings change.
+  // Race-safe contract: the regen reads a snapshot of batches via batchesRef and
+  // commits via a functional setState that only replaces the originally-targeted
+  // batch IDs — any batch the user adds mid-regen is preserved verbatim. The
+  // regen loop is chunked into REGEN_CHUNK_SIZE parallel `generateBarcodeImage`
+  // calls so the main thread isn't blocked, and the existing `isGenerating`
+  // signal disables the export buttons (and surfaces progress) during the run.
   const batchesRef = useRef(batches);
   batchesRef.current = batches;
+  const REGEN_CHUNK_SIZE = 20;
   useEffect(() => {
     if (batchesRef.current.length === 0) return;
     let cancelled = false;
+    const targets = batchesRef.current;
+    const totalItems = targets.reduce((sum, b) => sum + b.values.length, 0);
+    if (totalItems === 0) return;
+
+    setIsGenerating(true);
+    setProgress(0);
+
+    // bwip-js (2D path) renders synchronously inside an async function, so a
+    // chunk of Promise.all calls still occupies one tick of the main thread.
+    // Yielding between chunks gives the browser a frame to paint progress
+    // updates and process the cleanup-driven `cancelled` flag.
+    const yieldToBrowser = () =>
+      new Promise<void>((resolve) => {
+        if (typeof requestAnimationFrame === 'function') {
+          requestAnimationFrame(() => resolve());
+        } else {
+          setTimeout(resolve, 0);
+        }
+      });
 
     (async () => {
-      const updated: CommittedBatch[] = [];
-      for (const batch of batchesRef.current) {
-        const images: BarcodeImageResult[] = [];
-        for (const val of batch.values) {
-          const processed = applyChecksum(val, batch.format, batch.checksumType);
-          const result = await generateBarcodeImage(processed, batch.format, scale, margin, widthMils, dpi, height);
-          if (result) {
-            images.push({ ...result, formatLabel: batch.formatLabel, checksumLabel: batch.checksumLabel });
+      try {
+        let processedCount = 0;
+        const updatedById = new Map<string, CommittedBatch>();
+
+        for (const batch of targets) {
+          const images: BarcodeImageResult[] = [];
+          for (let i = 0; i < batch.values.length; i += REGEN_CHUNK_SIZE) {
+            if (cancelled) return;
+            const chunk = batch.values.slice(i, i + REGEN_CHUNK_SIZE);
+            const chunkResults = await Promise.all(
+              chunk.map((val) => {
+                const processedVal = applyChecksum(val, batch.format, batch.checksumType);
+                return generateBarcodeImage(processedVal, batch.format, scale, margin, widthMils, dpi, height);
+              }),
+            );
+            for (const result of chunkResults) {
+              if (result) {
+                images.push({ ...result, formatLabel: batch.formatLabel, checksumLabel: batch.checksumLabel });
+              }
+            }
+            processedCount += chunk.length;
+            if (!cancelled) setProgress((processedCount / totalItems) * 100);
+            await yieldToBrowser();
           }
+          updatedById.set(batch.id, { ...batch, images });
         }
-        updated.push({ ...batch, images });
+
+        if (cancelled) return;
+        // Functional setState: preserve any batch the user appended during regen
+        // (its ID is not in updatedById, so it falls through unchanged). Targeted
+        // batches are replaced by their regenerated counterparts.
+        setBatches((prev) => prev.map((b) => updatedById.get(b.id) ?? b));
+      } finally {
+        if (!cancelled) {
+          setIsGenerating(false);
+          setProgress(0);
+        }
       }
-      if (!cancelled) setBatches(updated);
     })();
 
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      setIsGenerating(false);
+      setProgress(0);
+    };
   }, [scale, widthMils, dpi, height, margin]);
 
   const generateRandomValues = () => {

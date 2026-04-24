@@ -21,8 +21,14 @@ export function useCertification(
   const certifyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const certifyGenerationRef = useRef(0);
 
+  // Only the fields that materially affect the decoded image / ISO grade should
+  // re-trigger certification. Cosmetic config changes (lineColor, fontSize,
+  // background, displayValue, margin, quality, ...) must NOT kick off another
+  // 600 ms debounce + ZXing decode round-trip — that wastes CPU/battery and
+  // creates user-visible flicker on every cosmetic edit.
+  const { format, text, checksumType, widthMils, dpi } = config;
   useEffect(() => {
-    if (!certEnabled || !isValid || !config.text.trim()) {
+    if (!certEnabled || !isValid || !text.trim()) {
       setCertificate(null);
       setIsCertifying(false);
       if (certifyTimerRef.current) clearTimeout(certifyTimerRef.current);
@@ -42,7 +48,8 @@ export function useCertification(
     return () => {
       if (certifyTimerRef.current) clearTimeout(certifyTimerRef.current);
     };
-  }, [config, isValid, certEnabled]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [format, text, checksumType, widthMils, dpi, isValid, certEnabled]);
 
   const downloadCertificate = useCallback(() => {
     if (!certificate) return;

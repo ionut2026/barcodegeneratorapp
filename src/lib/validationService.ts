@@ -2,11 +2,12 @@
  * ValidationService — ZXing round-trip scan + ISO Compliance Certificate.
  *
  * Flow for certify(config):
- *  1. Run BarcodeValidator.validateConfig() — throws on Strict Match failure.
+ *  1. Normalise the user-entered text and apply any optional checksum, then
+ *     run BarcodeValidator.validate() — throws ValidationException on Strict
+ *     Match failure. (Note: the engine's bare validateConfig() does NOT
+ *     normalise — certify() owns the rendering-pipeline contract.)
  *  2. Render the barcode to a PNG data-URL via generateBarcodeImage().
- *  3. Decode the PNG with ZXing BrowserMultiFormatRe
- * 
- * ader (same hints as Analyzer).
+ *  3. Decode the PNG with ZXing BrowserMultiFormatReader (same hints as Analyzer).
  *  4. Bit-perfect match: compare decoded value to expected value (both normalised).
  *  5. Catch ZXing FormatException / ChecksumException / NotFoundException.
  *  6. Grade the result A–F per ISO 15416 / healthcare X-dimension compliance.

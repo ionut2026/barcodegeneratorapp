@@ -39,7 +39,7 @@ import {
 // ── Private helpers ───────────────────────────────────────────────────────────
 
 /** EAN-8: weights 3,1,3,1,3,1,3 from left (opposite of EAN-13). */
-function computeEAN8Check(body: string): number {
+export function computeEAN8Check(body: string): number {
   const digits = body.slice(0, 7).split('').map(Number);
   let sum = 0;
   for (let i = 0; i < 7; i++) sum += digits[i] * (i % 2 === 0 ? 3 : 1);
@@ -47,7 +47,7 @@ function computeEAN8Check(body: string): number {
 }
 
 /** ITF-14 / GS1: weights 3,1 alternating from left over 13 body digits. */
-function computeITF14Check(body: string): number {
+export function computeITF14Check(body: string): number {
   const digits = body.slice(0, 13).split('').map(Number);
   let sum = 0;
   for (let i = 0; i < 13; i++) sum += digits[i] * (i % 2 === 0 ? 3 : 1);
@@ -265,7 +265,15 @@ export class BarcodeValidator {
     return this.buildResult(formatValidation, format, value, cv, warnings);
   }
 
-  /** Convenience wrapper: validate a complete BarcodeConfig object. */
+  /**
+   * Convenience wrapper: validate a complete BarcodeConfig object.
+   *
+   * IMPORTANT: This validates `config.text` AS-IS — it does not normalise the
+   * value or apply optional checksums. Callers that mirror the rendering
+   * pipeline (e.g. ValidationService.certify) must call `normalizeForRendering`
+   * + `applyChecksum` themselves before invoking `validate()` directly. Use
+   * this wrapper only when you want to validate exactly what the user typed.
+   */
   validateConfig(config: BarcodeConfig): ValidationResult {
     return this.validate(config.text, config.format, config.checksumType);
   }

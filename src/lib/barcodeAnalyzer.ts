@@ -1,17 +1,17 @@
 // Barcode analysis logic — independent of all existing features.
 // Detects compatible formats and validates checksums from a raw barcode value.
+//
+// Architecture: dispatch is registry-based. Adding a new format requires only
+// updating BARCODE_FORMATS + INTRINSIC/OPTIONAL registries in validationEngine.ts;
+// this file then participates automatically. Format-specific overrides for
+// confidence and checksum messaging live in the small registries below.
 
+import { BarcodeFormat, BARCODE_FORMATS, ChecksumType, validateInput } from './barcodeUtils';
 import {
-  BarcodeFormat,
-  BARCODE_FORMATS,
-  validateInput,
-  calculateEAN13Checksum,
-  calculateUPCChecksum,
-  calculateMod10,
-  calculateMod11,
-  calculateMod43Checksum,
-  calculateMod16Checksum,
-} from './barcodeUtils';
+  BarcodeValidator,
+  ValidationException,
+  ChecksumValidationResult,
+} from './validationEngine';
 
 export type ChecksumStatus = 'valid' | 'invalid' | 'not_applicable' | 'intrinsic';
 
@@ -32,211 +32,134 @@ export interface AnalysisResult {
   primaryMatch: FormatMatch | null;
 }
 
-// EAN-8 check digit uses weights 3,1,3,1,3,1,3 (opposite of EAN-13)
-function calculateEAN8Checksum(input: string): number {
-  const digits = input.slice(0, 7).split('').map(Number);
-  let sum = 0;
-  for (let i = 0; i < 7; i++) {
-    sum += digits[i] * (i % 2 === 0 ? 3 : 1);
-  }
-  return (10 - (sum % 10)) % 10;
-}
-
 type ChecksumEval = { status: ChecksumStatus; label: string; note: string };
 
-function evaluateChecksum(input: string, format: BarcodeFormat): ChecksumEval {
-  const upper = input.toUpperCase();
+// ── Checksum evaluation ──────────────────────────────────────────────────────
 
-  switch (format) {
-    case 'EAN13': {
-      if (input.length === 13) {
-        const expected = calculateEAN13Checksum(input.slice(0, 12));
-        const actual = parseInt(input[12], 10);
-        return expected === actual
-          ? { status: 'valid', label: 'EAN-13', note: `Check digit ${actual} is correct` }
-          : { status: 'invalid', label: 'EAN-13', note: `Check digit should be ${expected}, got ${actual}` };
-      }
-      return { status: 'not_applicable', label: '—', note: '12-digit input has no check digit to validate' };
-    }
+const validator = new BarcodeValidator();
 
-    case 'EAN8': {
-      if (input.length === 8) {
-        const expected = calculateEAN8Checksum(input.slice(0, 7));
-        const actual = parseInt(input[7], 10);
-        return expected === actual
-          ? { status: 'valid', label: 'EAN-8', note: `Check digit ${actual} is correct` }
-          : { status: 'invalid', label: 'EAN-8', note: `Check digit should be ${expected}, got ${actual}` };
-      }
-      return { status: 'not_applicable', label: '—', note: '7-digit input has no check digit to validate' };
-    }
+// Formats whose checksum behaviour doesn't fit the validator pattern
+// (no intrinsic check, no optional check candidates).
+const CHECKSUM_OVERRIDES: Partial<Record<BarcodeFormat, ChecksumEval>> = {
+  EAN5:       { status: 'not_applicable', label: '—', note: 'Supplemental add-on code; no standalone checksum' },
+  EAN2:       { status: 'not_applicable', label: '—', note: 'Supplemental add-on code; no standalone checksum' },
+  pharmacode: { status: 'not_applicable', label: '—', note: 'Pharmacode uses binary encoding; no separate check digit' },
+};
 
-    case 'UPC': {
-      if (input.length === 12) {
-        const expected = calculateUPCChecksum(input.slice(0, 11));
-        const actual = parseInt(input[11], 10);
-        return expected === actual
-          ? { status: 'valid', label: 'UPC-A', note: `Check digit ${actual} is correct` }
-          : { status: 'invalid', label: 'UPC-A', note: `Check digit should be ${expected}, got ${actual}` };
-      }
-      return { status: 'not_applicable', label: '—', note: '11-digit input has no check digit to validate' };
-    }
+// Formats with optional checksums: the analyzer probes each candidate algorithm
+// and returns the first one that validates. If none match, the value simply has
+// no detectable check character.
+const OPTIONAL_CANDIDATES: Partial<Record<BarcodeFormat, ChecksumType[]>> = {
+  CODE39:  ['mod43'],
+  codabar: ['mod16'],
+  MSI:     ['mod10', 'mod11'],
+  ITF:     ['mod10'],
+};
 
-    case 'UPCE': {
-      if (input.length >= 7) {
-        return { status: 'intrinsic', label: 'UPC-E', note: 'Requires full UPC-A expansion to validate; verified by scanner' };
-      }
-      return { status: 'not_applicable', label: '—', note: 'Short form has no standalone check digit' };
-    }
+const OPTIONAL_NONE_DETECTED_NOTE: Partial<Record<BarcodeFormat, string>> = {
+  CODE39:  'Mod 43 is optional for CODE 39; no valid check character detected',
+  codabar: 'Checksum is optional for Codabar; no valid check character detected',
+  MSI:     'Checksum is optional for MSI; none detected',
+  ITF:     'Mod 10 is optional for ITF; none detected',
+};
 
-    case 'ITF14': {
-      if (input.length === 14) {
-        // ITF-14 uses GS1 alternating weights 3,1 from left (same as EAN/UPC), not Luhn
-        const digits = input.slice(0, 13).split('').map(Number);
-        let sum = 0;
-        for (let i = 0; i < 13; i++) {
-          sum += digits[i] * (i % 2 === 0 ? 3 : 1);
-        }
-        const expected = (10 - (sum % 10)) % 10;
-        const actual = parseInt(input[13], 10);
-        return expected === actual
-          ? { status: 'valid', label: 'GS1 Mod 10', note: `Check digit ${actual} is correct` }
-          : { status: 'invalid', label: 'GS1 Mod 10', note: `Check digit should be ${expected}, got ${actual}` };
-      }
-      return { status: 'not_applicable', label: '—', note: '13-digit input has no check digit to validate' };
-    }
+// Algorithm names mirroring INTRINSIC_REGISTRY in validationEngine — used to
+// label `invalid` outcomes (which surface via ValidationException, not the
+// returned ChecksumValidationResult).
+const INTRINSIC_ALGORITHM_NAMES: Partial<Record<BarcodeFormat, string>> = {
+  EAN13: 'EAN-13 Mod 10',
+  EAN8:  'EAN-8 Mod 10',
+  UPC:   'UPC-A Mod 10',
+  ITF14: 'GS1 Mod 10',
+};
 
-    case 'CODE128':
-      return { status: 'intrinsic', label: 'Code 128', note: 'Check character is encoding-level; verified automatically by scanner' };
-
-    case 'CODE93':
-      return { status: 'intrinsic', label: 'Code 93', note: 'Dual check characters are encoding-level; verified automatically by scanner' };
-
-    case 'MSI10':
-      return { status: 'intrinsic', label: 'Mod 10', note: 'Check digit is appended automatically during barcode rendering' };
-
-    case 'MSI11':
-      return { status: 'intrinsic', label: 'Mod 11', note: 'Check digit is appended automatically during barcode rendering' };
-
-    case 'MSI1010':
-      return { status: 'intrinsic', label: 'Double Mod 10', note: 'Two check digits are appended automatically during barcode rendering' };
-
-    case 'MSI1110':
-      return { status: 'intrinsic', label: 'Mod 11 + Mod 10', note: 'Dual check digits are appended automatically during barcode rendering' };
-
-    case 'CODE39': {
-      // Mod 43 is optional: try to detect a valid check character at the end
-      if (upper.length >= 2) {
-        const expected = calculateMod43Checksum(upper.slice(0, -1));
-        if (expected === upper[upper.length - 1]) {
-          return { status: 'valid', label: 'Mod 43', note: `Last character '${upper[upper.length - 1]}' is a valid Mod 43 check` };
-        }
-      }
-      return { status: 'not_applicable', label: '—', note: 'Mod 43 is optional for CODE 39; no valid check character detected' };
-    }
-
-    case 'codabar': {
-      // Mod 16 is the most common Codabar checksum — try to detect it
-      if (input.length >= 2) {
-        const expected = calculateMod16Checksum(input.slice(0, -1));
-        if (expected === input[input.length - 1]) {
-          return { status: 'valid', label: 'Mod 16', note: `Last character is a valid Mod 16 check` };
-        }
-      }
-      return { status: 'not_applicable', label: '—', note: 'Checksum is optional for Codabar; no valid check character detected' };
-    }
-
-    case 'MSI': {
-      // Both Mod 10 and Mod 11 are optional — try to detect either
-      if (input.length >= 2) {
-        const body = input.slice(0, -1);
-        const lastChar = input[input.length - 1];
-        const expectedMod10 = calculateMod10(body);
-        if (expectedMod10 === parseInt(lastChar, 10)) {
-          return { status: 'valid', label: 'Mod 10', note: `Last digit is a valid Mod 10 check` };
-        }
-        const expectedMod11 = calculateMod11(body);
-        const checkMod11 = expectedMod11 === 10 ? 'X' : String(expectedMod11);
-        if (checkMod11 === lastChar.toUpperCase()) {
-          return { status: 'valid', label: 'Mod 11', note: `Last character is a valid Mod 11 check` };
-        }
-      }
-      return { status: 'not_applicable', label: '—', note: 'Checksum is optional for MSI; none detected' };
-    }
-
-    case 'ITF': {
-      // Mod 10 is optional for ITF — try to detect it
-      if (input.length >= 2) {
-        const expected = calculateMod10(input.slice(0, -1));
-        const actual = parseInt(input[input.length - 1], 10);
-        if (expected === actual) {
-          return { status: 'valid', label: 'Mod 10', note: `Last digit ${actual} is a valid Mod 10 check` };
-        }
-      }
-      return { status: 'not_applicable', label: '—', note: 'Mod 10 is optional for ITF; none detected' };
-    }
-
-    case 'EAN5':
-    case 'EAN2':
-      return { status: 'not_applicable', label: '—', note: 'Supplemental add-on code; no standalone checksum' };
-
-    case 'pharmacode':
-      return { status: 'not_applicable', label: '—', note: 'Pharmacode uses binary encoding; no separate check digit' };
-
-    case 'qrcode':
-    case 'azteccode':
-    case 'datamatrix':
-    case 'pdf417':
-      return { status: 'intrinsic', label: 'Reed-Solomon', note: 'Error correction is embedded in the 2D symbol; verified by scanner' };
-
+function mapResult(cv: ChecksumValidationResult): ChecksumEval {
+  switch (cv.status) {
+    case 'valid':
+      return { status: 'valid', label: cv.algorithm, note: cv.message };
+    case 'invalid':
+      return { status: 'invalid', label: cv.algorithm, note: cv.message };
+    case 'intrinsic':
+      return { status: 'intrinsic', label: cv.algorithm, note: cv.message };
+    case 'not_applicable':
+      return { status: 'not_applicable', label: '—', note: cv.message };
+    case 'skipped':
     default:
-      return { status: 'not_applicable', label: '—', note: '' };
+      return { status: 'not_applicable', label: '—', note: cv.message };
   }
 }
+
+function evaluateChecksum(input: string, format: BarcodeFormat): ChecksumEval {
+  const override = CHECKSUM_OVERRIDES[format];
+  if (override) return override;
+
+  const candidates = OPTIONAL_CANDIDATES[format];
+  if (candidates) {
+    for (const candidate of candidates) {
+      try {
+        const result = validator.validate(input, format, candidate);
+        if (result.checksumValidation.status === 'valid') {
+          return mapResult(result.checksumValidation);
+        }
+      } catch (e) {
+        // ValidationException = strict-match mismatch on this candidate.
+        // Optional checksums tolerate misses; try the next candidate.
+        if (e instanceof ValidationException) continue;
+        throw e;
+      }
+    }
+    return {
+      status: 'not_applicable',
+      label: '—',
+      note: OPTIONAL_NONE_DETECTED_NOTE[format] ?? 'No valid check character detected',
+    };
+  }
+
+  try {
+    const result = validator.validate(input, format);
+    return mapResult(result.checksumValidation);
+  } catch (e) {
+    if (e instanceof ValidationException) {
+      const label = INTRINSIC_ALGORITHM_NAMES[e.format] ?? e.format;
+      return { status: 'invalid', label, note: e.details };
+    }
+    throw e;
+  }
+}
+
+// ── Confidence scoring ───────────────────────────────────────────────────────
+
+type ConfidenceFn = (input: string, isNumeric: boolean) => 'high' | 'medium' | 'low';
+
+const CONFIDENCE_REGISTRY: Partial<Record<BarcodeFormat, ConfidenceFn>> = {
+  EAN13: (i, n) => (i.length === 12 || i.length === 13) && n ? 'high' : 'medium',
+  EAN8:  (i, n) => (i.length === 7 || i.length === 8) && n ? 'high' : 'medium',
+  EAN5:  (i, n) => i.length === 5 && n ? 'high' : 'medium',
+  EAN2:  (i, n) => i.length === 2 && n ? 'high' : 'medium',
+  UPC:   (i, n) => (i.length === 11 || i.length === 12) && n ? 'high' : 'medium',
+  UPCE:  (i, n) => i.length >= 6 && i.length <= 8 && n ? 'high' : 'medium',
+  ITF14: (i, n) => (i.length === 13 || i.length === 14) && n ? 'high' : 'medium',
+  pharmacode: (i, n) => {
+    const num = parseInt(i, 10);
+    return n && num >= 3 && num <= 131070 ? 'high' : 'low';
+  },
+  CODE39:  (i) => /^[A-Z0-9\-\.\s\$\/\+\%]+$/.test(i.toUpperCase()) ? 'medium' : 'low',
+  codabar: (i) => /^[0-9\-\$\:\/\.\+]+$/.test(i) ? 'medium' : 'low',
+  ITF:     (_, n) => n ? 'medium' : 'low',
+  MSI:     (_, n) => n ? 'medium' : 'low',
+  MSI10:   (_, n) => n ? 'medium' : 'low',
+  MSI11:   (_, n) => n ? 'medium' : 'low',
+  MSI1010: (_, n) => n ? 'medium' : 'low',
+  MSI1110: (_, n) => n ? 'medium' : 'low',
+};
 
 function getConfidence(input: string, format: BarcodeFormat): 'high' | 'medium' | 'low' {
   const isNumeric = /^\d+$/.test(input);
-
-  switch (format) {
-    case 'EAN13':
-      return (input.length === 12 || input.length === 13) && isNumeric ? 'high' : 'medium';
-    case 'EAN8':
-      return (input.length === 7 || input.length === 8) && isNumeric ? 'high' : 'medium';
-    case 'EAN5':
-      return input.length === 5 && isNumeric ? 'high' : 'medium';
-    case 'EAN2':
-      return input.length === 2 && isNumeric ? 'high' : 'medium';
-    case 'UPC':
-      return (input.length === 11 || input.length === 12) && isNumeric ? 'high' : 'medium';
-    case 'UPCE':
-      return input.length >= 6 && input.length <= 8 && isNumeric ? 'high' : 'medium';
-    case 'ITF14':
-      return (input.length === 13 || input.length === 14) && isNumeric ? 'high' : 'medium';
-    case 'pharmacode': {
-      const num = parseInt(input, 10);
-      return isNumeric && num >= 3 && num <= 131070 ? 'high' : 'low';
-    }
-    case 'CODE39':
-      return /^[A-Z0-9\-\.\s\$\/\+\%]+$/.test(input.toUpperCase()) ? 'medium' : 'low';
-    case 'codabar':
-      return /^[0-9\-\$\:\/\.\+]+$/.test(input) ? 'medium' : 'low';
-    case 'ITF':
-    case 'MSI':
-    case 'MSI10':
-    case 'MSI11':
-    case 'MSI1010':
-    case 'MSI1110':
-      return isNumeric ? 'medium' : 'low';
-    case 'CODE93':
-    case 'CODE128':
-    case 'qrcode':
-    case 'azteccode':
-    case 'datamatrix':
-    case 'pdf417':
-      return 'low';
-    default:
-      return 'low';
-  }
+  const fn = CONFIDENCE_REGISTRY[format];
+  return fn ? fn(input, isNumeric) : 'low';
 }
+
+// ── Public API ───────────────────────────────────────────────────────────────
 
 export function analyzeBarcode(input: string): AnalysisResult {
   const trimmed = input.trim();

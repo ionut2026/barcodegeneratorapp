@@ -48,19 +48,16 @@ export function BatchPreview({ images, onPrint, onDownloadZip, onExportPDF, isGe
     try {
       const JSZip = (await import('jszip')).default;
       const zip = new JSZip();
-      let completedCount = 0;
 
-      for (const img of images) {
+      const buildEntry = async (img: BarcodeImageResult): Promise<{ ok: true; name: string; base64: string } | { ok: false; value: string; error: unknown }> => {
         try {
-          // Load barcode image
           const barcodeImage = new Image();
           await new Promise<void>((resolve, reject) => {
             barcodeImage.onload = () => resolve();
-            barcodeImage.onerror = () => reject(new Error('Failed to load image'));
+            barcodeImage.onerror = () => reject(new Error(`Failed to load image for ${img.value}`));
             barcodeImage.src = img.dataUrl;
           });
 
-          // Create canvas with barcode + text
           const textHeight = 30;
           const canvas = document.createElement('canvas');
           canvas.width = img.width;
@@ -68,59 +65,75 @@ export function BatchPreview({ images, onPrint, onDownloadZip, onExportPDF, isGe
           const ctx = canvas.getContext('2d');
           if (!ctx) throw new Error('Failed to get canvas context');
 
-          // Fill background
           ctx.fillStyle = '#ffffff';
           ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-          // Draw barcode image
           ctx.drawImage(barcodeImage, 0, 0, img.width, img.height);
-
-          // Draw barcode value text below
           ctx.fillStyle = '#000000';
           ctx.font = 'bold 14px "JetBrains Mono", monospace';
           ctx.textAlign = 'center';
           ctx.fillText(img.value, img.width / 2, img.height + 10);
 
-          // Convert canvas to blob with DPI metadata
-          const canvasBlob = await new Promise<Blob>((resolve) => {
-            canvas.toBlob((blob) => {
-              resolve(blob || new Blob());
-            }, 'image/png');
+          const canvasBlob = await new Promise<Blob | null>((resolve) => {
+            canvas.toBlob((blob) => resolve(blob), 'image/png');
+          });
+          if (!canvasBlob) throw new Error('canvas.toBlob returned null');
+
+          const dataUrl = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result as string);
+            reader.onerror = () => reject(reader.error ?? new Error('FileReader failed'));
+            reader.readAsDataURL(canvasBlob);
           });
 
-          // Inject DPI metadata
-          const reader = new FileReader();
-          reader.onload = () => {
-            const base64 = (reader.result as string).split(',')[1];
-            const dpiUrl = injectPngDpi(`data:image/png;base64,${base64}`, dpi);
-            // Store the data URL for zip
-            zip.file(`barcode-${img.value}.png`, dpiUrl.split(',')[1], { base64: true });
-            completedCount++;
-          };
-          reader.readAsDataURL(canvasBlob);
+          const base64 = dataUrl.split(',')[1];
+          if (!base64) throw new Error('Empty base64 payload from FileReader');
+          const dpiUrl = injectPngDpi(`data:image/png;base64,${base64}`, dpi);
+          const dpiBase64 = dpiUrl.split(',')[1];
+          if (!dpiBase64) throw new Error('Empty base64 payload after DPI injection');
+
+          return { ok: true, name: `barcode-${img.value}.png`, base64: dpiBase64 };
         } catch (error) {
-          console.warn(`Failed to add image for ${img.value}:`, error);
-          completedCount++;
+          return { ok: false, value: img.value, error };
         }
+      };
+
+      const results = await Promise.all(images.map(buildEntry));
+
+      const successes = results.filter((r): r is { ok: true; name: string; base64: string } => r.ok);
+      const failures = results.filter((r): r is { ok: false; value: string; error: unknown } => !r.ok);
+
+      if (successes.length === 0) {
+        for (const f of failures) console.warn(`Failed to add image for ${f.value}:`, f.error);
+        toast.error('Failed to download PNG files');
+        return;
       }
 
-      // Wait for all images to be processed
-      const checkComplete = setInterval(async () => {
-        if (completedCount === images.length) {
-          clearInterval(checkComplete);
-          const content = await zip.generateAsync({ type: 'blob' });
-          const url = URL.createObjectURL(content);
-          const link = document.createElement('a');
-          link.href = url;
-          link.download = `barcodes-individual-${Date.now()}.zip`;
-          link.click();
-          URL.revokeObjectURL(url);
-          toast.success(`Downloaded ${images.length} PNG images with values`);
-        }
-      }, 50);
+      for (const entry of successes) {
+        zip.file(entry.name, entry.base64, { base64: true });
+      }
 
-      // Timeout after 10 seconds
-      setTimeout(() => clearInterval(checkComplete), 10000);
+      if (failures.length > 0) {
+        for (const f of failures) console.warn(`Failed to add image for ${f.value}:`, f.error);
+        const skipped = failures.map(f => f.value).join('\n');
+        zip.file('SKIPPED.txt', `The following barcodes could not be exported:\n${skipped}\n`);
+      }
+
+      const content = await zip.generateAsync({ type: 'blob' });
+      const url = URL.createObjectURL(content);
+      try {
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `barcodes-individual-${Date.now()}.zip`;
+        link.click();
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+
+      if (failures.length === 0) {
+        toast.success(`Downloaded ${successes.length} PNG images with values`);
+      } else {
+        toast.warning(`Downloaded ${successes.length} of ${images.length} PNGs (${failures.length} failed)`);
+      }
     } catch (error) {
       console.error('PNG download error:', error);
       toast.error('Failed to download PNG files');

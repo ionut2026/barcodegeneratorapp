@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback } from 'react';
 import { Header } from '@/components/Header';
 import { BarcodePreview } from '@/components/BarcodePreview';
 import { BarcodeControls } from '@/components/BarcodeControls';
@@ -21,7 +21,10 @@ const Index = () => {
   const [batchImages, setBatchImages] = useState<BarcodeImageResult[]>([]);
   const [checksumInput, setChecksumInput] = useState('');
   const [checksumVariants, setChecksumVariants] = useState<{ name: string; fullValue: string; applicable: boolean }[]>([]);
-  const batchActionsRef = useRef<BatchActions | null>(null);
+  const [batchActions, setBatchActions] = useState<BatchActions | null>(null);
+  const handleBatchActionsReady = useCallback((actions: BatchActions) => {
+    setBatchActions(actions);
+  }, []);
   // Validate the raw input with checksum context first, then confirm the
   // post-checksum result is also valid (catches checksum-induced issues like
   // MSI + mod11 producing an 'X' character).
@@ -136,7 +139,7 @@ const Index = () => {
                 <TabsContent value="batch" className="mt-0 data-[state=inactive]:hidden" forceMount>
                   <BatchGenerator
                     onImagesGenerated={setBatchImages}
-                    onActionsReady={(actions) => { batchActionsRef.current = actions; }}
+                    onActionsReady={handleBatchActionsReady}
                   />
                 </TabsContent>
                 
@@ -153,10 +156,10 @@ const Index = () => {
               <BatchPreview
                 images={batchImages}
                 onPrint={handleBatchPrint}
-                onDownloadZip={() => batchActionsRef.current?.downloadAsZip()}
-                onExportPDF={() => batchActionsRef.current?.exportAsPDF()}
-                isGenerating={batchActionsRef.current?.isGenerating ?? false}
-                actionsDisabled={batchActionsRef.current?.isDisabled ?? true}
+                onDownloadZip={() => batchActions?.downloadAsZip()}
+                onExportPDF={() => batchActions?.exportAsPDF()}
+                isGenerating={batchActions?.isGenerating ?? false}
+                actionsDisabled={batchActions?.isDisabled ?? true}
                 dpi={config.dpi}
               />
             ) : activeTab === 'checksum' ? (
