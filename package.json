@@ -11,7 +11,9 @@
     "build:dev": "vite build --mode development",
     "electron:build": "npm run build && electron-builder --publish never",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "setup": "npm install",
+    "postinstall": "echo 'Dependencies installed successfully!'"
   },
   "build": {
     "appId": "com.ionut.barcodegenerator",
