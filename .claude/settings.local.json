@@ -45,7 +45,9 @@
       "Bash(ssh-keygen -lf ~/.ssh/id_ed25519_stratecssh.pub)",
       "Bash(ssh-keygen -lf ~/.ssh/id_ed25519.pub)",
       "Bash(tasklist //FI \"IMAGENAME eq Barcode Generator.exe\")",
-      "Bash(tasklist //FI \"IMAGENAME eq electron.exe\")"
+      "Bash(tasklist //FI \"IMAGENAME eq electron.exe\")",
+      "Bash(npm:*)",
+      "Bash(npx vite build:*)"
     ]
   }
 }
