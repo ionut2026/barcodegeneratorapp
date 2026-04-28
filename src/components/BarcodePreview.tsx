@@ -183,13 +183,20 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
         heightPx = result.heightPx;
       }
 
-      // Overflow check — never scale, block if too large
+      // Overflow check. For 'page-per-label' mode the PDF generator scales
+      // the barcode down to fit, so a warn-and-continue is friendlier than
+      // a hard block. For 'a4-grid' label mode we still block because the
+      // user explicitly asked for label-rectangle layout and a scaled-down
+      // barcode there would silently fail to scan.
       const fit = checkBarcodeFit(widthPx, heightPx, config.dpi, printFormat);
       if (!fit.fits) {
-        toast.warning(
-          `Barcode (${fit.barcodeWidthMm.toFixed(1)} \u00d7 ${fit.barcodeHeightMm.toFixed(1)} mm) exceeds ${printFormat.label} printable area (${fit.printableWidthMm.toFixed(1)} \u00d7 ${fit.printableHeightMm.toFixed(1)} mm). Reduce bar width or bar height to fit.`
-        );
-        return;
+        const message = `Barcode (${fit.barcodeWidthMm.toFixed(1)} \u00d7 ${fit.barcodeHeightMm.toFixed(1)} mm) exceeds ${printFormat.label} printable area (${fit.printableWidthMm.toFixed(1)} \u00d7 ${fit.printableHeightMm.toFixed(1)} mm).`;
+        if (printFormat.mode === 'page-per-label') {
+          toast.warning(`${message} Scaling down to fit \u2014 scannability may suffer.`);
+        } else {
+          toast.warning(`${message} Reduce bar width or bar height to fit.`);
+          return;
+        }
       }
 
       // Generate PDF and open in new tab for printing

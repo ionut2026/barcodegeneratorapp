@@ -129,15 +129,21 @@ export function ChecksumPreview({ variants, inputValue, widthMils = 7.5, dpi = 3
       return;
     }
 
-    // Overflow check for label formats — use the widest barcode
+    // Overflow check for label formats — use the widest barcode.
+    // 'page-per-label' mode scales down inside the PDF so we warn but still
+    // print; 'a4-grid' mode keeps the hard block (user picked label-rectangle
+    // layout — silently scaling there would mis-represent the request).
     if (isLabelFormat) {
       const widest = printableCards.reduce((a, b) => a.widthPx > b.widthPx ? a : b);
       const fit = checkBarcodeFit(widest.widthPx, widest.heightPx, dpi, printFormat);
       if (!fit.fits) {
-        toast.warning(
-          `Barcode "${widest.name}" (${fit.barcodeWidthMm.toFixed(1)} \u00d7 ${fit.barcodeHeightMm.toFixed(1)} mm) exceeds ${printFormat.label} printable area (${fit.printableWidthMm.toFixed(1)} \u00d7 ${fit.printableHeightMm.toFixed(1)} mm). Reduce bar width to fit.`
-        );
-        return;
+        const message = `Barcode "${widest.name}" (${fit.barcodeWidthMm.toFixed(1)} \u00d7 ${fit.barcodeHeightMm.toFixed(1)} mm) exceeds ${printFormat.label} printable area (${fit.printableWidthMm.toFixed(1)} \u00d7 ${fit.printableHeightMm.toFixed(1)} mm).`;
+        if (printFormat.mode === 'page-per-label') {
+          toast.warning(`${message} Scaling down to fit \u2014 scannability may suffer.`);
+        } else {
+          toast.warning(`${message} Reduce bar width to fit.`);
+          return;
+        }
       }
     }
 
