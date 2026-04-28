@@ -83,7 +83,7 @@ function createWindow() {
 
 // Allow-list of label/page formats accepted from the renderer. Any value
 // outside this set is treated as null (no special @page rule).
-const ALLOWED_PRINT_FORMATS = new Set(['a4-page', 'label-100x50', 'label-40x21']);
+const ALLOWED_PRINT_FORMATS = new Set(['a4-page', 'label-100x50', 'label-40x21', 'label-100x50-page', 'label-40x21-page']);
 
 // Coerce a value to a finite number within an inclusive [min, max] range.
 // Returns 0 (the historical default) for anything else. Defence-in-depth:

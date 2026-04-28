@@ -1,7 +1,21 @@
 // Print format definitions and overflow detection for label/page printing.
 // All calculations preserve exact barcode mil-size — no scaling is ever applied.
 
-export type PrintFormatId = 'label-100x50' | 'label-40x21' | 'a4-page';
+export type PrintFormatId =
+  | 'label-100x50'
+  | 'label-40x21'
+  | 'label-100x50-page'
+  | 'label-40x21-page'
+  | 'a4-page';
+
+// Layout mode for the generated PDF:
+//  - 'a4-grid'        → PDF page is A4; barcodes stacked/gridded inside,
+//                       optionally with a label-sized rectangle drawn around each.
+//  - 'page-per-label' → PDF page itself matches the label dimensions; one
+//                       barcode per page, centred. Required for label printers
+//                       loaded with continuous 100×50 / 40×21 mm rolls that
+//                       choke on A4 page sizing.
+export type PrintLayoutMode = 'a4-grid' | 'page-per-label';
 
 export interface PrintFormat {
   id: PrintFormatId;
@@ -10,24 +24,45 @@ export interface PrintFormat {
   widthMm: number;
   heightMm: number;
   marginMm: number;
+  mode: PrintLayoutMode;
 }
 
 export const PRINT_FORMAT_REGISTRY: Record<PrintFormatId, PrintFormat> = {
   'label-100x50': {
     id: 'label-100x50',
     label: '100 \u00d7 50 mm Label',
-    description: '300 DPI label printer',
+    description: 'Stacked on A4 page',
     widthMm: 100,
     heightMm: 50,
     marginMm: 2,
+    mode: 'a4-grid',
   },
   'label-40x21': {
     id: 'label-40x21',
     label: '40 \u00d7 21 mm Label',
-    description: '300 DPI label printer',
+    description: 'Stacked on A4 page',
     widthMm: 40,
     heightMm: 21,
     marginMm: 2,
+    mode: 'a4-grid',
+  },
+  'label-100x50-page': {
+    id: 'label-100x50-page',
+    label: '100 \u00d7 50 mm Label (page-sized)',
+    description: 'Single per page \u2014 label printer',
+    widthMm: 100,
+    heightMm: 50,
+    marginMm: 2,
+    mode: 'page-per-label',
+  },
+  'label-40x21-page': {
+    id: 'label-40x21-page',
+    label: '40 \u00d7 21 mm Label (page-sized)',
+    description: 'Single per page \u2014 label printer',
+    widthMm: 40,
+    heightMm: 21,
+    marginMm: 2,
+    mode: 'page-per-label',
   },
   'a4-page': {
     id: 'a4-page',
@@ -36,6 +71,7 @@ export const PRINT_FORMAT_REGISTRY: Record<PrintFormatId, PrintFormat> = {
     widthMm: 210,
     heightMm: 297,
     marginMm: 10,
+    mode: 'a4-grid',
   },
 };
 
@@ -82,6 +118,39 @@ export function generatePageCSS(format: PrintFormat): string {
   return `@page { size: ${format.widthMm}mm ${format.heightMm}mm; margin: ${format.marginMm}mm; }`;
 }
 
+// Centre an image of size (drawW × drawH) inside a rectangle starting at
+// (rectX, rectY) with size (rectW × rectH) and an inner margin of `margin`,
+// optionally reserving `reserveBottomMm` for a text label. Returns the
+// top-left coordinates plus the (possibly scaled-down) draw dimensions.
+function fitInsideRect(
+  imgWmm: number,
+  imgHmm: number,
+  rectX: number,
+  rectY: number,
+  rectW: number,
+  rectH: number,
+  margin: number,
+  reserveBottomMm: number,
+): { x: number; y: number; drawW: number; drawH: number } {
+  const innerW = rectW - 2 * margin;
+  const innerH = rectH - 2 * margin;
+  let drawW = imgWmm;
+  let drawH = imgHmm;
+  if (drawW > innerW) {
+    const s = innerW / drawW;
+    drawW *= s;
+    drawH *= s;
+  }
+  if (drawH > innerH - reserveBottomMm) {
+    const s = (innerH - reserveBottomMm) / drawH;
+    drawW *= s;
+    drawH *= s;
+  }
+  const x = rectX + (rectW - drawW) / 2;
+  const y = rectY + margin + (innerH - reserveBottomMm - drawH) / 2;
+  return { x, y, drawW, drawH };
+}
+
 // ---------------------------------------------------------------------------
 // PDF generation via jsPDF — avoids browser @page rotation issues
 // ---------------------------------------------------------------------------
@@ -95,17 +164,26 @@ export interface PrintItem {
 }
 
 /**
- * Generate a PDF on A4 portrait pages with barcodes stacked vertically,
- * each inside a drawn label-sized rectangle.
+ * Generate a PDF for printing.
  *
- * The selected format controls the **rectangle size** drawn on the page:
- * - 100×50mm label → 100×50mm rectangles
- * - 40×21mm label  → 40×21mm rectangles
- * - A4 page        → no rectangles, barcodes placed at actual size
+ * Two layout modes (selected via `format.mode`):
  *
- * Barcodes are centered inside each rectangle at their exact physical mm
- * size. If a barcode is wider than the rectangle, it is scaled down to fit.
- * Calls jsPDF dynamically to keep the import out of the initial bundle.
+ * **`'a4-grid'`** — PDF page is always A4 portrait; barcodes are placed
+ * inside the page:
+ *   - For label formats (100×50, 40×21) one column of label-sized rectangles
+ *     is drawn down the page and barcodes are centred inside each rectangle.
+ *   - For the A4 format itself, no rectangles are drawn — barcodes are
+ *     gridded at their actual mm size.
+ *
+ * **`'page-per-label'`** — PDF page itself matches the label dimensions
+ * (e.g. 100×50 mm). Exactly one barcode per page, centred inside the
+ * `marginMm` printable area. This is the mode required by label printers
+ * loaded with continuous 100×50 / 40×21 mm rolls — they choke on A4 page
+ * sizing.
+ *
+ * In every case the barcode is rendered at its exact physical mm size; if it
+ * exceeds the available area it is scaled down (never up) to fit. jsPDF is
+ * imported dynamically to keep it out of the initial bundle.
  */
 export async function generatePrintPdf(
   items: PrintItem[],
@@ -115,7 +193,62 @@ export async function generatePrintPdf(
 
   const { jsPDF } = await import('jspdf');
 
-  // Always use A4 portrait — avoids jsPDF landscape orientation bugs
+  const labelTextH = 5; // space reserved for text label below barcode
+
+  // ── Mode: page-per-label ────────────────────────────────────────────────
+  // PDF page itself is the label size. One barcode per page. Pass the
+  // dimensions as a [W, H] tuple with orientation: 'portrait' so jsPDF treats
+  // them literally (no auto-rotation regardless of W vs H).
+  if (format.mode === 'page-per-label') {
+    const pageW = format.widthMm;
+    const pageH = format.heightMm;
+    const margin = format.marginMm;
+    // jsPDF swaps the format tuple to match the orientation: 'portrait'
+    // forces width <= height, 'landscape' forces width >= height. Pick the
+    // orientation that preserves our intended (W × H) so a 100×50 label
+    // does not come out as a 50×100 portrait page.
+    const orientation: 'portrait' | 'landscape' = pageW >= pageH ? 'landscape' : 'portrait';
+
+    const pdf = new jsPDF({
+      unit: 'mm',
+      format: [pageW, pageH],
+      orientation,
+    });
+
+    for (let i = 0; i < items.length; i++) {
+      if (i > 0) pdf.addPage([pageW, pageH], orientation);
+
+      const item = items[i];
+      const imgWmm = item.widthPx * 25.4 / item.dpi;
+      const imgHmm = item.heightPx * 25.4 / item.dpi;
+
+      const { x, y, drawW, drawH } = fitInsideRect(
+        imgWmm,
+        imgHmm,
+        0,
+        0,
+        pageW,
+        pageH,
+        margin,
+        item.label ? labelTextH : 0,
+      );
+
+      pdf.addImage(item.dataUrl, 'PNG', x, y, drawW, drawH);
+
+      if (item.label) {
+        pdf.setFontSize(7);
+        pdf.setFont('courier');
+        pdf.setTextColor(0);
+        pdf.text(item.label, pageW / 2, y + drawH + 3.5, { align: 'center' });
+      }
+    }
+
+    await deliverPdf(pdf);
+    return;
+  }
+
+  // ── Mode: a4-grid ───────────────────────────────────────────────────────
+  // Always use A4 portrait — avoids jsPDF landscape orientation bugs.
   const pageW = 210;
   const pageH = 297;
   const pageMargin = 10;
@@ -139,7 +272,6 @@ export async function generatePrintPdf(
 
   const printableW = pageW - 2 * pageMargin;
   const printableH = pageH - 2 * pageMargin;
-  const labelTextH = 5; // space for text below barcode
 
   if (isLabel) {
     // ── Label mode: single column, left-aligned, stacked vertically ──
@@ -240,11 +372,16 @@ export async function generatePrintPdf(
     }
   }
 
-  // Hand the PDF off for preview. In packaged Electron builds (file:// origin)
-  // blob: URLs cannot reliably be opened in a new BrowserWindow, so we write
-  // the bytes to a temp file via IPC and let the OS default PDF viewer
-  // handle it — the user gets a familiar Ctrl+P dialog. In the browser we
-  // fall back to window.open(blob:) which opens a tab.
+  // Hand the PDF off for preview.
+  await deliverPdf(pdf);
+}
+
+// Hand a finished jsPDF document off for preview. In packaged Electron builds
+// (file:// origin) blob: URLs cannot reliably be opened in a new BrowserWindow,
+// so we write the bytes to a temp file via IPC and let the OS default PDF
+// viewer handle it — the user gets a familiar Ctrl+P dialog. In the browser we
+// fall back to window.open(blob:) which opens a tab.
+async function deliverPdf(pdf: import('jspdf').jsPDF): Promise<void> {
   const openPdf = typeof window !== 'undefined' ? window.electronAPI?.openPdf : undefined;
   if (openPdf) {
     // Send raw bytes via structured clone instead of base64. Avoids a base64
