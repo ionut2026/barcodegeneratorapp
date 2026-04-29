@@ -183,20 +183,28 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
         heightPx = result.heightPx;
       }
 
-      // Overflow check. For 'page-per-label' mode the PDF generator scales
-      // the barcode down to fit, so a warn-and-continue is friendlier than
-      // a hard block. For 'a4-grid' label mode we still block because the
-      // user explicitly asked for label-rectangle layout and a scaled-down
-      // barcode there would silently fail to scan.
+      // Overflow check — never scale, block if too large. Scaling shrinks
+      // bar widths below the configured X-dimension and breaks scannability,
+      // so we refuse the print and tell the user the largest X-dimension
+      // (mils) and bar height that would actually fit.
       const fit = checkBarcodeFit(widthPx, heightPx, config.dpi, printFormat);
       if (!fit.fits) {
-        const message = `Barcode (${fit.barcodeWidthMm.toFixed(1)} \u00d7 ${fit.barcodeHeightMm.toFixed(1)} mm) exceeds ${printFormat.label} printable area (${fit.printableWidthMm.toFixed(1)} \u00d7 ${fit.printableHeightMm.toFixed(1)} mm).`;
-        if (printFormat.mode === 'page-per-label') {
-          toast.warning(`${message} Scaling down to fit \u2014 scannability may suffer.`);
-        } else {
-          toast.warning(`${message} Reduce bar width or bar height to fit.`);
-          return;
-        }
+        const widthRatio = fit.printableWidthMm / fit.barcodeWidthMm;
+        const heightRatio = fit.printableHeightMm / fit.barcodeHeightMm;
+        const limitingRatio = Math.min(widthRatio, heightRatio);
+        // Largest mils and height that would fit — round down so the user's
+        // first retry actually fits rather than landing exactly on the edge.
+        const suggestedMils = Math.max(1, Math.floor(config.widthMils * widthRatio * 10) / 10);
+        const suggestedHeight = Math.max(10, Math.floor(config.height * heightRatio));
+        const action: string[] = [];
+        if (widthRatio < 1) action.push(`X-dim \u2264 ${suggestedMils} mils`);
+        if (heightRatio < 1) action.push(`bar height \u2264 ${suggestedHeight} px`);
+        toast.warning(
+          `Barcode (${fit.barcodeWidthMm.toFixed(1)} \u00d7 ${fit.barcodeHeightMm.toFixed(1)} mm) is too big for ${printFormat.label} (${fit.printableWidthMm.toFixed(1)} \u00d7 ${fit.printableHeightMm.toFixed(1)} mm printable). Set ${action.join(' and ')} to fit.`,
+          { duration: 8000 }
+        );
+        void limitingRatio;
+        return;
       }
 
       // Generate PDF and open in new tab for printing

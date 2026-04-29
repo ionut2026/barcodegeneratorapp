@@ -121,7 +121,13 @@ export function generatePageCSS(format: PrintFormat): string {
 // Centre an image of size (drawW × drawH) inside a rectangle starting at
 // (rectX, rectY) with size (rectW × rectH) and an inner margin of `margin`,
 // optionally reserving `reserveBottomMm` for a text label. Returns the
-// top-left coordinates plus the (possibly scaled-down) draw dimensions.
+// top-left coordinates and the original draw dimensions.
+//
+// IMPORTANT: this helper never scales the image. Callers must verify the
+// barcode fits using checkBarcodeFit() before calling generatePrintPdf().
+// Scaling would shrink bar widths below the configured X-dimension and
+// silently break scannability — by policy we let the print fail loudly
+// (or refuse it upstream) instead.
 function fitInsideRect(
   imgWmm: number,
   imgHmm: number,
@@ -134,20 +140,13 @@ function fitInsideRect(
 ): { x: number; y: number; drawW: number; drawH: number } {
   const innerW = rectW - 2 * margin;
   const innerH = rectH - 2 * margin;
-  let drawW = imgWmm;
-  let drawH = imgHmm;
-  if (drawW > innerW) {
-    const s = innerW / drawW;
-    drawW *= s;
-    drawH *= s;
-  }
-  if (drawH > innerH - reserveBottomMm) {
-    const s = (innerH - reserveBottomMm) / drawH;
-    drawW *= s;
-    drawH *= s;
-  }
+  const drawW = imgWmm;
+  const drawH = imgHmm;
   const x = rectX + (rectW - drawW) / 2;
   const y = rectY + margin + (innerH - reserveBottomMm - drawH) / 2;
+  // innerW is unused here (kept for symmetry / future use); reference it so
+  // the linter doesn't flag the parameter.
+  void innerW;
   return { x, y, drawW, drawH };
 }
 
@@ -299,22 +298,13 @@ export async function generatePrintPdf(
         const imgHmm = item.heightPx * 25.4 / item.dpi;
 
         // Available area inside the rectangle
-        const innerW = rectW - 2 * rectMargin;
         const innerH = rectH - 2 * rectMargin;
 
-        // Scale barcode down if it exceeds the rectangle's inner area
-        let drawW = imgWmm;
-        let drawH = imgHmm;
-        if (drawW > innerW) {
-          const s = innerW / drawW;
-          drawW *= s;
-          drawH *= s;
-        }
-        if (drawH > innerH - labelTextH) {
-          const s = (innerH - labelTextH) / drawH;
-          drawW *= s;
-          drawH *= s;
-        }
+        // Draw the barcode at its exact physical mm size — never scale.
+        // The pre-flight checkBarcodeFit() call upstream is responsible for
+        // refusing prints that would overflow.
+        const drawW = imgWmm;
+        const drawH = imgHmm;
 
         // Center barcode inside the rectangle
         const x = rectX + (rectW - drawW) / 2;
