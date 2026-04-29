@@ -623,7 +623,7 @@ describe('calculate7CheckDRChecksum', () => {
 // ---------------------------------------------------------------------------
 describe('calculateMod16JapanChecksum', () => {
   it('returns a character from the Japan Mod 16 charset', () => {
-    const chars = '0123456789-$:/.+ABCDTN*E';
+    const chars = '0123456789-$:/.+ABCD';
     const result = calculateMod16JapanChecksum('123');
     expect(chars).toContain(result);
   });
@@ -803,11 +803,30 @@ describe('calculateMod16JapanChecksum — specific vectors', () => {
     expect(calculateMod16JapanChecksum('1234')).toBe('6');
   });
 
-  it('result is always from the first 16 characters (indices 0-15)', () => {
-    const extendedChars = new Set(['A', 'B', 'C', 'D', 'T', 'N', '*', 'E']);
+  it('result is always from the canonical 0-19 charset (never the alias glyphs)', () => {
+    const aliasGlyphs = new Set(['T', 'N', '*', 'E']);
     for (const input of ['0', '1', '9999', '1234567890']) {
-      expect(extendedChars.has(calculateMod16JapanChecksum(input))).toBe(false);
+      expect(aliasGlyphs.has(calculateMod16JapanChecksum(input))).toBe(false);
     }
+  });
+
+  // Regression: T/N/*/E are JIS aliases for A/B/C/D and must share their
+  // values (16/17/18/19). Previously they were treated as 20/21/22/23 which
+  // produced wrong check digits for any input containing them.
+  it('treats T as alias of A (value 16): "T" → check matches "A"', () => {
+    expect(calculateMod16JapanChecksum('T')).toBe(calculateMod16JapanChecksum('A'));
+  });
+  it('treats N as alias of B (value 17): "N" → check matches "B"', () => {
+    expect(calculateMod16JapanChecksum('N')).toBe(calculateMod16JapanChecksum('B'));
+  });
+  it('treats * as alias of C (value 18): "*" → check matches "C"', () => {
+    expect(calculateMod16JapanChecksum('*')).toBe(calculateMod16JapanChecksum('C'));
+  });
+  it('treats E as alias of D (value 19): "E" → check matches "D"', () => {
+    expect(calculateMod16JapanChecksum('E')).toBe(calculateMod16JapanChecksum('D'));
+  });
+  it('alias arithmetic: "T1" → A=16, 1=1, sum=17, (16-17%16)%16=15 → "+"', () => {
+    expect(calculateMod16JapanChecksum('T1')).toBe('+');
   });
 });
 

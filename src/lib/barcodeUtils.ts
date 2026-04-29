@@ -559,18 +559,26 @@ export function calculate7CheckDRChecksum(input: string): string {
   return String(check);
 }
 
-// Modulo 16 Japan variant
+// Modulo 16 Japan variant (JIS X 0503 / AIM USS-Codabar).
+// Same complement formula as NW-7 but accepts the JIS aliases T, N, *, E
+// for the start/stop characters A, B, C, D respectively. Aliases share
+// values 16-19 with their A-D counterparts; they do NOT introduce new
+// indices. (Note: per spec start/stop characters aren't normally part of
+// the data being summed, but if a caller passes them we still want the
+// alias to map to the correct value rather than a phantom 20-23.)
 export function calculateMod16JapanChecksum(input: string): string {
-  const codabarChars = '0123456789-$:/.+ABCDTN*E';
+  const codabarChars = '0123456789-$:/.+ABCD';
+  const aliasMap: Record<string, string> = { T: 'A', N: 'B', '*': 'C', E: 'D' };
   let sum = 0;
-  
-  for (const char of input.toUpperCase()) {
+
+  for (const rawChar of input.toUpperCase()) {
+    const char = aliasMap[rawChar] ?? rawChar;
     const index = codabarChars.indexOf(char);
     if (index !== -1) {
       sum += index;
     }
   }
-  
+
   const check = (16 - (sum % 16)) % 16;
   return codabarChars[check];
 }
