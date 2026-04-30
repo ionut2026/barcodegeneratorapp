@@ -552,13 +552,43 @@ describe('calculateJRCChecksum', () => {
 });
 
 // ---------------------------------------------------------------------------
-// calculateJapanNW7Checksum
+// calculateJapanNW7Checksum — weighted Mod 11 (JIS X 0503), requires len=10
 // ---------------------------------------------------------------------------
 describe('calculateJapanNW7Checksum', () => {
-  it('returns a character from the NW-7 charset', () => {
-    const chars = '0123456789-$:/.+ABCD';
-    const result = calculateJapanNW7Checksum('123');
-    expect(chars).toContain(result);
+  it('returns "1" for canonical "0123456789" vector (matches Python reference)', () => {
+    // first_sum = 0*5+1*9+2*10+3*7+4*8+5*4+6*5+7*3+8*6+9*2 = 219
+    // 219 % 11 = 10; check = 11 - 10 = 1
+    expect(calculateJapanNW7Checksum('0123456789')).toBe('1');
+  });
+
+  it('triggers second-weight fallback for "9000000000"', () => {
+    // first_sum = 9*5 = 45; 45 % 11 = 1; check = 11 - 1 = 10 → fallback
+    // second_sum = 9*6 = 54; 54 % 11 = 10; check = 11 - 10 = 1 → "1"
+    expect(calculateJapanNW7Checksum('9000000000')).toBe('1');
+  });
+
+  it('collapses 11 to 0: returns "0" for "0000000000"', () => {
+    // first_sum = 0; check = 11 - 0 = 11 → 0
+    expect(calculateJapanNW7Checksum('0000000000')).toBe('0');
+  });
+
+  it('returns "" when input length is not 10 (spec requires exactly 10 chars)', () => {
+    expect(calculateJapanNW7Checksum('')).toBe('');
+    expect(calculateJapanNW7Checksum('123')).toBe('');
+    expect(calculateJapanNW7Checksum('123456789')).toBe('');
+    expect(calculateJapanNW7Checksum('12345678901')).toBe('');
+  });
+
+  it('returns "" when input contains characters outside the Codabar set', () => {
+    // Length 10 but 'Z' is not in '0123456789-$:/.+ABCD'
+    expect(calculateJapanNW7Checksum('Z23456789Z')).toBe('');
+  });
+
+  it('result is always a numeric digit (Mod 11 result clamped to 0-9)', () => {
+    for (const input of ['0123456789', '1234567890', '9999999999', '5555555555']) {
+      const result = calculateJapanNW7Checksum(input);
+      if (result) expect(result).toMatch(/^\d$/);
+    }
   });
 });
 
@@ -619,13 +649,33 @@ describe('calculate7CheckDRChecksum', () => {
 });
 
 // ---------------------------------------------------------------------------
-// calculateMod16JapanChecksum
+// calculateMod16JapanChecksum — weighted Mod 16 (JIS X 0503), requires len=10
 // ---------------------------------------------------------------------------
 describe('calculateMod16JapanChecksum', () => {
-  it('returns a character from the Japan Mod 16 charset', () => {
-    const chars = '0123456789-$:/.+ABCD';
-    const result = calculateMod16JapanChecksum('123');
-    expect(chars).toContain(result);
+  it('returns "5" for canonical "0123456789" vector (matches Python reference)', () => {
+    // first_sum = 219; 219 % 16 = 11; check = 16 - 11 = 5 (≤ 9, no fallback)
+    expect(calculateMod16JapanChecksum('0123456789')).toBe('5');
+  });
+
+  it('collapses 16 to 0: returns "0" for "0000000000"', () => {
+    // first_sum = 0; check = 16 - 0 = 16 → 0
+    expect(calculateMod16JapanChecksum('0000000000')).toBe('0');
+  });
+
+  it('triggers second-weight fallback when first chk_sum > 9', () => {
+    // "1000000000": first_sum = 1*5 = 5; check = 16 - 5 = 11 (>9) → fallback
+    // second_sum = 1*6 = 6; check = 16 - 6 = 10 → codabarChars[10] = "-"
+    expect(calculateMod16JapanChecksum('1000000000')).toBe('-');
+  });
+
+  it('returns "" when input length is not 10', () => {
+    expect(calculateMod16JapanChecksum('')).toBe('');
+    expect(calculateMod16JapanChecksum('123')).toBe('');
+    expect(calculateMod16JapanChecksum('12345678901')).toBe('');
+  });
+
+  it('returns "" when input contains characters outside the Codabar set / aliases', () => {
+    expect(calculateMod16JapanChecksum('Z23456789Z')).toBe('');
   });
 });
 
@@ -765,68 +815,64 @@ describe('calculateMod16Checksum', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// calculateMod16JapanChecksum — same complement formula, extended charset
-// ---------------------------------------------------------------------------
-describe('calculateMod16JapanChecksum', () => {
-  it('uses complement: "1" → sum=1, check=15 → "+" (index 15 in extended charset)', () => {
-    expect(calculateMod16JapanChecksum('1')).toBe('+');
-  });
-
-  it('regression: result differs from raw remainder', () => {
-    const result = calculateMod16JapanChecksum('1');
-    expect(result).not.toBe('-'); // index 1 = '-' (the old incorrect remainder result)
-  });
-});
-
-// TEST-GAP-2: calculateJapanNW7Checksum specific vectors
+// TEST-GAP-2: calculateJapanNW7Checksum — additional spec-compliant vectors
 describe('calculateJapanNW7Checksum — specific vectors', () => {
-  it('returns "6" for "1234" (indices 1+2+3+4=10, (16-10%16)%16=6 → chars[6]="6")', () => {
-    expect(calculateJapanNW7Checksum('1234')).toBe('6');
+  it('rejects all wrong-length inputs with empty string', () => {
+    for (const input of ['', '0', '1234', '9999', '12345678901']) {
+      expect(calculateJapanNW7Checksum(input)).toBe('');
+    }
   });
 
-  it('returns "0" for "0" (index 0, sum=0, (16-0)%16=0 → chars[0]="0")', () => {
-    expect(calculateJapanNW7Checksum('0')).toBe('0');
-  });
-
-  it('result is never a start/stop character (A,B,C,D)', () => {
+  it('result for valid 10-char input is never a start/stop character (A,B,C,D)', () => {
+    // Mod 11 result is always 0-9, never letters
     const startStops = new Set(['A', 'B', 'C', 'D']);
-    for (const input of ['0', '1', '9999', '1234567890', '-$:/.+']) {
-      expect(startStops.has(calculateJapanNW7Checksum(input))).toBe(false);
+    for (const input of ['0123456789', '1234567890', '9999999999', '5555555555']) {
+      const result = calculateJapanNW7Checksum(input);
+      expect(result).not.toBe('');
+      expect(startStops.has(result)).toBe(false);
     }
   });
 });
 
-// TEST-GAP-2: calculateMod16JapanChecksum specific vectors
+// TEST-GAP-2: calculateMod16JapanChecksum — additional spec-compliant vectors
 describe('calculateMod16JapanChecksum — specific vectors', () => {
-  it('returns "6" for "1234" (1+2+3+4=10, (16-10%16)%16=6 → chars[6]="6")', () => {
-    expect(calculateMod16JapanChecksum('1234')).toBe('6');
+  it('rejects all wrong-length inputs with empty string', () => {
+    for (const input of ['', '0', '1234', '9999', '12345678901', 'T1']) {
+      expect(calculateMod16JapanChecksum(input)).toBe('');
+    }
   });
 
-  it('result is always from the canonical 0-19 charset (never the alias glyphs)', () => {
+  it('valid 10-char result is from the canonical 0-19 charset (never the alias glyphs)', () => {
     const aliasGlyphs = new Set(['T', 'N', '*', 'E']);
-    for (const input of ['0', '1', '9999', '1234567890']) {
-      expect(aliasGlyphs.has(calculateMod16JapanChecksum(input))).toBe(false);
+    for (const input of ['0123456789', '1234567890', '9999999999']) {
+      const result = calculateMod16JapanChecksum(input);
+      expect(result).not.toBe('');
+      expect(aliasGlyphs.has(result)).toBe(false);
     }
   });
 
   // Regression: T/N/*/E are JIS aliases for A/B/C/D and must share their
   // values (16/17/18/19). Previously they were treated as 20/21/22/23 which
-  // produced wrong check digits for any input containing them.
-  it('treats T as alias of A (value 16): "T" → check matches "A"', () => {
-    expect(calculateMod16JapanChecksum('T')).toBe(calculateMod16JapanChecksum('A'));
+  // produced wrong check digits for any input containing them. Verified
+  // here using 10-char inputs (the spec-required length).
+  it('treats T as alias of A: "T123456789" check matches "A123456789"', () => {
+    expect(calculateMod16JapanChecksum('T123456789')).toBe(calculateMod16JapanChecksum('A123456789'));
   });
-  it('treats N as alias of B (value 17): "N" → check matches "B"', () => {
-    expect(calculateMod16JapanChecksum('N')).toBe(calculateMod16JapanChecksum('B'));
+  it('treats N as alias of B: "N123456789" check matches "B123456789"', () => {
+    expect(calculateMod16JapanChecksum('N123456789')).toBe(calculateMod16JapanChecksum('B123456789'));
   });
-  it('treats * as alias of C (value 18): "*" → check matches "C"', () => {
-    expect(calculateMod16JapanChecksum('*')).toBe(calculateMod16JapanChecksum('C'));
+  it('treats * as alias of C: "*123456789" check matches "C123456789"', () => {
+    expect(calculateMod16JapanChecksum('*123456789')).toBe(calculateMod16JapanChecksum('C123456789'));
   });
-  it('treats E as alias of D (value 19): "E" → check matches "D"', () => {
-    expect(calculateMod16JapanChecksum('E')).toBe(calculateMod16JapanChecksum('D'));
+  it('treats E as alias of D: "E123456789" check matches "D123456789"', () => {
+    expect(calculateMod16JapanChecksum('E123456789')).toBe(calculateMod16JapanChecksum('D123456789'));
   });
-  it('alias arithmetic: "T1" → A=16, 1=1, sum=17, (16-17%16)%16=15 → "+"', () => {
-    expect(calculateMod16JapanChecksum('T1')).toBe('+');
+  it('alias arithmetic: "T123456789" produces "5" (T=16; first_sum=299, 299%16=11, 16-11=5)', () => {
+    // values [16,1,2,3,4,5,6,7,8,9]
+    // first_sum = 16*5+1*9+2*10+3*7+4*8+5*4+6*5+7*3+8*6+9*2
+    //           = 80+9+20+21+32+20+30+21+48+18 = 299
+    // 299 % 16 = 11; check = 16 - 11 = 5 (≤ 9, no fallback)
+    expect(calculateMod16JapanChecksum('T123456789')).toBe('5');
   });
 });
 

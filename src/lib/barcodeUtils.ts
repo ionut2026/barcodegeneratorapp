@@ -174,9 +174,17 @@ export function applyChecksum(text: string, format: BarcodeFormat, checksumType:
 
 export const BARCODE_FORMATS: { value: BarcodeFormat; label: string; description: string; validChars: string; lengthHint: string; category: '1D' | '2D' }[] = [
   // 1D Barcodes
-  { 
-    value: 'CODE39', 
-    label: 'CODE 39', 
+  {
+    value: 'codabar',
+    label: 'Codabar',
+    description: 'Libraries, blood banks, shipping',
+    validChars: '0-9, -, $, :, /, ., +',
+    lengthHint: 'Any length',
+    category: '1D'
+  },
+  {
+    value: 'CODE39',
+    label: 'CODE 39',
     description: 'Alphanumeric, widely used in industrial applications',
     validChars: 'A-Z, 0-9, -, ., $, /, +, %, SPACE',
     lengthHint: 'Any length',
@@ -310,14 +318,6 @@ export const BARCODE_FORMATS: { value: BarcodeFormat; label: string; description
     lengthHint: 'Number 3-131070',
     category: '1D'
   },
-  { 
-    value: 'codabar', 
-    label: 'Codabar', 
-    description: 'Libraries, blood banks, shipping',
-    validChars: '0-9, -, $, :, /, ., +',
-    lengthHint: 'Any length',
-    category: '1D'
-  },
   // 2D Barcodes
   { 
     value: 'qrcode', 
@@ -435,19 +435,45 @@ export function calculateMod16Checksum(input: string): string {
   return codabarChars[check];
 }
 
-// Japan NW-7 checksum for Codabar
+// Codabar Japan NW-7 / Mod 16 Japan shared weight tables (JIS X 0503).
+// Used by both calculateJapanNW7Checksum (Mod 11) and
+// calculateMod16JapanChecksum (Mod 16).
+const JAPAN_NW7_FIRST_WEIGHT  = [5, 9, 10, 7, 8, 4, 5, 3, 6, 2];
+const JAPAN_NW7_SECOND_WEIGHT = [6, 2, 10, 4, 3, 7, 6, 8, 5, 9];
+const JAPAN_NW7_LENGTH = 10;
+
+// Japan NW-7 checksum for Codabar (JIS X 0503).
+// Algorithm: weighted Mod 11 using FIRST_WEIGHT; if the result is 10
+// (non-numeric in Mod 11), retry with SECOND_WEIGHT; if the second pass
+// also yields 10, the input is indeterminate and we return ''. The spec
+// requires exactly 10 numerical values — anything else returns ''.
 export function calculateJapanNW7Checksum(input: string): string {
   const codabarChars = '0123456789-$:/.+ABCD';
-  let sum = 0;
-  
+
+  // Decode characters to numerical values; reject anything not in the Codabar set
+  // so non-Codabar input doesn't silently produce a misaligned weighted sum.
+  const values: number[] = [];
   for (const char of input.toUpperCase()) {
     const index = codabarChars.indexOf(char);
-    if (index !== -1) {
-      sum += index;
-    }
+    if (index === -1) return '';
+    values.push(index);
   }
-  
-  const check = (16 - (sum % 16)) % 16;
+
+  if (values.length !== JAPAN_NW7_LENGTH) return '';
+
+  let firstSum = 0;
+  for (let i = 0; i < JAPAN_NW7_LENGTH; i++) firstSum += values[i] * JAPAN_NW7_FIRST_WEIGHT[i];
+  let check = 11 - (firstSum % 11);
+
+  if (check === 10) {
+    let secondSum = 0;
+    for (let i = 0; i < JAPAN_NW7_LENGTH; i++) secondSum += values[i] * JAPAN_NW7_SECOND_WEIGHT[i];
+    check = 11 - (secondSum % 11);
+  }
+
+  if (check === 11) check = 0;
+  if (check === 10) return ''; // indeterminate per spec
+
   return codabarChars[check];
 }
 
@@ -560,26 +586,36 @@ export function calculate7CheckDRChecksum(input: string): string {
 }
 
 // Modulo 16 Japan variant (JIS X 0503 / AIM USS-Codabar).
-// Same complement formula as NW-7 but accepts the JIS aliases T, N, *, E
-// for the start/stop characters A, B, C, D respectively. Aliases share
-// values 16-19 with their A-D counterparts; they do NOT introduce new
-// indices. (Note: per spec start/stop characters aren't normally part of
-// the data being summed, but if a caller passes them we still want the
-// alias to map to the correct value rather than a phantom 20-23.)
+// Algorithm: weighted Mod 16 using JAPAN_NW7_FIRST_WEIGHT (same weights as
+// Japan NW-7); if the result is > 9 (non-numeric in Mod 16), retry with
+// JAPAN_NW7_SECOND_WEIGHT. The spec requires exactly 10 input values.
+// Accepts the JIS aliases T, N, *, E for start/stop characters A, B, C, D
+// respectively — they share values 16–19 with their A–D counterparts.
 export function calculateMod16JapanChecksum(input: string): string {
   const codabarChars = '0123456789-$:/.+ABCD';
   const aliasMap: Record<string, string> = { T: 'A', N: 'B', '*': 'C', E: 'D' };
-  let sum = 0;
 
+  const values: number[] = [];
   for (const rawChar of input.toUpperCase()) {
     const char = aliasMap[rawChar] ?? rawChar;
     const index = codabarChars.indexOf(char);
-    if (index !== -1) {
-      sum += index;
-    }
+    if (index === -1) return '';
+    values.push(index);
   }
 
-  const check = (16 - (sum % 16)) % 16;
+  if (values.length !== JAPAN_NW7_LENGTH) return '';
+
+  let firstSum = 0;
+  for (let i = 0; i < JAPAN_NW7_LENGTH; i++) firstSum += values[i] * JAPAN_NW7_FIRST_WEIGHT[i];
+  let check = 16 - (firstSum % 16);
+  if (check === 16) check = 0;
+  else if (check > 9) {
+    let secondSum = 0;
+    for (let i = 0; i < JAPAN_NW7_LENGTH; i++) secondSum += values[i] * JAPAN_NW7_SECOND_WEIGHT[i];
+    check = 16 - (secondSum % 16);
+    if (check === 16) check = 0;
+  }
+
   return codabarChars[check];
 }
 

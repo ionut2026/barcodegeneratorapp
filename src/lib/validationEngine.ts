@@ -329,6 +329,20 @@ export class BarcodeValidator {
     const provided = value[value.length - 1];
     const expected = entry.compute(body, format);
 
+    // Empty `expected` means the algorithm declined to produce a check digit
+    // (e.g. Japan NW-7 / Mod 16 Japan require exactly 10 input values per JIS X 0503).
+    // Surface this as not_applicable so the user sees a clear message instead of
+    // a misleading "Expected '', got X".
+    if (expected === '') {
+      return {
+        status: 'not_applicable',
+        algorithm: entry.name,
+        expected: null,
+        provided,
+        message: `${entry.name} not applicable for body of length ${body.length}`,
+      };
+    }
+
     if (expected.toUpperCase() === provided.toUpperCase()) {
       return {
         status: 'valid',

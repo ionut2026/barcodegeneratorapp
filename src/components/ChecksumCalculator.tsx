@@ -44,6 +44,12 @@ export function ChecksumCalculator({ onChecksumData }: ChecksumCalculatorProps) 
     const isNumeric = /^\d+$/.test(input);
     const cleanInput = input.toUpperCase();
 
+    // Japan NW-7 and Mod 16 Japan return '' when the spec's preconditions
+    // (10 codabar chars, all decodable) aren't met. Compute once and gate
+    // applicability on a non-empty result so the row is greyed out cleanly.
+    const japanNW7 = calculateJapanNW7Checksum(input);
+    const mod16Japan = calculateMod16JapanChecksum(input);
+
     const results: ChecksumResult[] = [
       {
         name: 'Luhn (Mod 10)',
@@ -101,9 +107,9 @@ export function ChecksumCalculator({ onChecksumData }: ChecksumCalculatorProps) 
       },
       {
         name: 'Japan NW-7',
-        value: calculateJapanNW7Checksum(input),
-        fullValue: input + calculateJapanNW7Checksum(input),
-        applicable: true,
+        value: japanNW7 || '-',
+        fullValue: japanNW7 ? input + japanNW7 : '-',
+        applicable: japanNW7 !== '',
       },
       {
         name: 'JRC',
@@ -119,9 +125,9 @@ export function ChecksumCalculator({ onChecksumData }: ChecksumCalculatorProps) 
       },
       {
         name: 'Mod 16 Japan',
-        value: calculateMod16JapanChecksum(input),
-        fullValue: input + calculateMod16JapanChecksum(input),
-        applicable: true,
+        value: mod16Japan || '-',
+        fullValue: mod16Japan ? input + mod16Japan : '-',
+        applicable: mod16Japan !== '',
       },
       {
         name: 'EAN-13',
