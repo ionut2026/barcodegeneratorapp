@@ -6,7 +6,9 @@ export type PrintFormatId =
   | 'label-40x21'
   | 'label-100x50-page'
   | 'label-40x21-page'
-  | 'a4-page';
+  | 'a4-page'
+  | 'label-70x35-sheet'
+  | 'label-70x25-sheet';
 
 // Layout mode for the generated PDF:
 //  - 'a4-grid'        → PDF page is A4; barcodes stacked/gridded inside,
@@ -15,16 +17,43 @@ export type PrintFormatId =
 //                       barcode per page, centred. Required for label printers
 //                       loaded with continuous 100×50 / 40×21 mm rolls that
 //                       choke on A4 page sizing.
-export type PrintLayoutMode = 'a4-grid' | 'page-per-label';
+//  - 'a4-label-sheet' → PDF page is A4; labels are placed in a fixed grid
+//                       (sheetCols × sheetRows), edge-to-edge, with exact top
+//                       and side margins. Barcode centred inside each label cell.
+export type PrintLayoutMode = 'a4-grid' | 'page-per-label' | 'a4-label-sheet';
 
 export interface PrintFormat {
   id: PrintFormatId;
   label: string;
   description: string;
+  /** Label cell width in mm (also the column width for a4-label-sheet). */
   widthMm: number;
+  /** Label cell height in mm (also the row height for a4-label-sheet). */
   heightMm: number;
+  /** Inner margin within each label cell used when centering the barcode. */
   marginMm: number;
   mode: PrintLayoutMode;
+  /** Number of label columns on the sheet (a4-label-sheet only). */
+  sheetCols?: number;
+  /** Number of label rows on the sheet (a4-label-sheet only). */
+  sheetRows?: number;
+  /** Top (and mirrored bottom) page margin in mm (a4-label-sheet only). */
+  sheetTopMarginMm?: number;
+  /**
+   * Upward correction applied to every barcode within its label cell (mm,
+   * a4-label-sheet only).  Use this to compensate when the printer's
+   * hardware non-printable top margin is larger than the label sheet's
+   * physical top margin, causing barcodes to appear too low on the label.
+   * Formula: printerHardwareMarginMm − labelSheetTopMarginMm.
+   * Clamped so the barcode never renders above the cell boundary.
+   */
+  sheetBarcodeOffsetMm?: number;
+  /**
+   * Rightward correction applied to every barcode within its label cell (mm,
+   * a4-label-sheet only).  Use this to compensate when the printer's
+   * hardware non-printable left margin shifts content leftward on the page.
+   */
+  sheetHorizontalOffsetMm?: number;
 }
 
 export const PRINT_FORMAT_REGISTRY: Record<PrintFormatId, PrintFormat> = {
@@ -39,12 +68,17 @@ export const PRINT_FORMAT_REGISTRY: Record<PrintFormatId, PrintFormat> = {
   },
   'label-40x21': {
     id: 'label-40x21',
-    label: '40 \u00d7 21 mm Label',
-    description: 'Stacked on A4 page',
+    label: '40 × 21 mm Label Sheet',
+    description: '5 × 14 grid on A4 · print at Actual Size (100%)',
     widthMm: 40,
     heightMm: 21,
-    marginMm: 2,
-    mode: 'a4-grid',
+    marginMm: 1.5,
+    mode: 'a4-label-sheet',
+    sheetCols: 5,
+    sheetRows: 14,
+    sheetTopMarginMm: -13,
+    sheetBarcodeOffsetMm: 0,
+    sheetHorizontalOffsetMm: 5.5,
   },
   'label-100x50-page': {
     id: 'label-100x50-page',
@@ -72,6 +106,34 @@ export const PRINT_FORMAT_REGISTRY: Record<PrintFormatId, PrintFormat> = {
     heightMm: 297,
     marginMm: 10,
     mode: 'a4-grid',
+  },
+  'label-70x35-sheet': {
+    id: 'label-70x35-sheet',
+    label: '70 × 35 mm Label Sheet',
+    description: '3 × 8 grid on A4 · print at Actual Size (100%)',
+    widthMm: 70,
+    heightMm: 35,
+    marginMm: 2,
+    mode: 'a4-label-sheet',
+    sheetCols: 3,
+    sheetRows: 8,
+    sheetTopMarginMm: -10,
+    sheetBarcodeOffsetMm: 0,
+    sheetHorizontalOffsetMm: 3,
+  },
+  'label-70x25-sheet': {
+    id: 'label-70x25-sheet',
+    label: '70 × 25 mm Label Sheet',
+    description: '3 × 8 grid on A4 · print at Actual Size (100%)',
+    widthMm: 70,
+    heightMm: 25,
+    marginMm: 2,
+    mode: 'a4-label-sheet',
+    sheetCols: 3,
+    sheetRows: 8,
+    sheetTopMarginMm: -13,
+    sheetBarcodeOffsetMm: 0,
+    sheetHorizontalOffsetMm: 5.5,
   },
 };
 
@@ -239,6 +301,103 @@ export async function generatePrintPdf(
         pdf.setFont('courier');
         pdf.setTextColor(0);
         pdf.text(item.label, pageW / 2, y + drawH + 3.5, { align: 'center' });
+      }
+    }
+
+    await deliverPdf(pdf);
+    return;
+  }
+
+  // ── Mode: a4-label-sheet ────────────────────────────────────────────────
+  // Fixed grid of label cells on an A4 page (e.g. 3 cols × 8 rows).
+  // Labels are placed edge-to-edge; top margin is sheetTopMarginMm. The left
+  // margin is derived from the label width so the grid is centred on the page.
+  if (format.mode === 'a4-label-sheet') {
+    const pageW = 210;
+    const pageH = 297;
+    const cols = format.sheetCols ?? 3;
+    const rows = format.sheetRows ?? 8;
+    const topMargin = format.sheetTopMarginMm ?? 10;
+    const labelW = format.widthMm;
+    const labelH = format.heightMm;
+    const cellMargin = format.marginMm;
+    // Centre the column block horizontally on the A4 page.
+    const leftMargin = (pageW - cols * labelW) / 2;
+
+    const pdf = new jsPDF({
+      unit: 'mm',
+      format: 'a4',
+      orientation: 'portrait',
+    });
+
+    const perPage = cols * rows;
+    const totalPages = Math.ceil(items.length / perPage);
+
+    for (let page = 0; page < totalPages; page++) {
+      if (page > 0) pdf.addPage('a4', 'portrait');
+
+      for (let slot = 0; slot < perPage; slot++) {
+        const idx = page * perPage + slot;
+        if (idx >= items.length) break;
+
+        const col = slot % cols;
+        const row = Math.floor(slot / cols);
+
+        const item = items[idx];
+        const imgWmm = item.widthPx * 25.4 / item.dpi;
+        const imgHmm = item.heightPx * 25.4 / item.dpi;
+
+        const cellX = leftMargin + col * labelW;
+        const cellY = topMargin + row * labelH;
+
+        // Scale oversized barcodes to fit within the label cell while
+        // preserving aspect ratio. This is necessary for small labels
+        // (e.g. 40×21) where barcodes may exceed cell dimensions.
+        const availW = labelW - 2 * cellMargin;
+        const availH = labelH - 2 * cellMargin;
+        const scaleW = imgWmm > availW ? availW / imgWmm : 1;
+        const scaleH = imgHmm > availH ? availH / imgHmm : 1;
+        const scale = Math.min(scaleW, scaleH);
+        const fittedW = imgWmm * scale;
+        const fittedH = imgHmm * scale;
+
+        // Centre the (possibly scaled) barcode within the cell.
+        const { x, y: centeredY, drawW, drawH } = fitInsideRect(
+          fittedW,
+          fittedH,
+          cellX,
+          cellY,
+          labelW,
+          labelH,
+          cellMargin,
+          0,
+        );
+
+        // Apply printer calibration offsets:
+        // Vertical: the grid is positioned via negative sheetTopMarginMm to
+        // pre-compensate for the printer's hardware top margin. The normal
+        // centering math within cells then produces the correct physical
+        // position. Clamp at y=0 (page boundary) — not cellY — because with
+        // negative sheetTopMarginMm, row 0's cellY is negative but the
+        // barcode content must stay within the printable page.
+        const upwardOffset = format.sheetBarcodeOffsetMm ?? 0;
+        const y = Math.max(0, centeredY - upwardOffset);
+
+        // Horizontal: shift barcode rightward to correct for the printer's
+        // hardware left margin shifting content leftward on the page.
+        const rightOffset = format.sheetHorizontalOffsetMm ?? 0;
+        const xFinal = x + rightOffset;
+
+        pdf.addImage(item.dataUrl, 'PNG', xFinal, y, drawW, drawH);
+
+        if (item.label) {
+          pdf.setFontSize(7);
+          pdf.setFont('courier');
+          pdf.setTextColor(0);
+          // Position text below barcode, clamped within the page.
+          const textY = Math.max(0, y + drawH + 3.5);
+          pdf.text(item.label, cellX + labelW / 2 + rightOffset, textY, { align: 'center' });
+        }
       }
     }
 

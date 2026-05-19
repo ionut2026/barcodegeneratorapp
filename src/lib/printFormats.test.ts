@@ -10,13 +10,15 @@ import {
 
 describe('printFormats', () => {
   describe('PRINT_FORMAT_REGISTRY', () => {
-    it('contains all five format IDs', () => {
+    it('contains all seven format IDs', () => {
       const ids: PrintFormatId[] = [
         'label-100x50',
         'label-40x21',
         'label-100x50-page',
         'label-40x21-page',
         'a4-page',
+        'label-70x35-sheet',
+        'label-70x25-sheet',
       ];
       for (const id of ids) {
         expect(PRINT_FORMAT_REGISTRY[id]).toBeDefined();
@@ -25,15 +27,15 @@ describe('printFormats', () => {
     });
 
     it('PRINT_FORMATS list matches registry values', () => {
-      expect(PRINT_FORMATS).toHaveLength(5);
+      expect(PRINT_FORMATS).toHaveLength(7);
       for (const f of PRINT_FORMATS) {
         expect(PRINT_FORMAT_REGISTRY[f.id]).toBe(f);
       }
     });
 
-    it('legacy label / a4 entries use a4-grid layout mode', () => {
+    it('legacy label / a4 entries use correct layout modes', () => {
       expect(PRINT_FORMAT_REGISTRY['label-100x50'].mode).toBe('a4-grid');
-      expect(PRINT_FORMAT_REGISTRY['label-40x21'].mode).toBe('a4-grid');
+      expect(PRINT_FORMAT_REGISTRY['label-40x21'].mode).toBe('a4-label-sheet');
       expect(PRINT_FORMAT_REGISTRY['a4-page'].mode).toBe('a4-grid');
     });
 
@@ -47,6 +49,42 @@ describe('printFormats', () => {
       expect(p40.mode).toBe('page-per-label');
       expect(p40.widthMm).toBe(40);
       expect(p40.heightMm).toBe(21);
+    });
+
+    it('70×35 sheet format uses a4-label-sheet mode with correct grid and dimensions', () => {
+      const f = PRINT_FORMAT_REGISTRY['label-70x35-sheet'];
+      expect(f.mode).toBe('a4-label-sheet');
+      expect(f.widthMm).toBe(70);
+      expect(f.heightMm).toBe(35);
+      expect(f.sheetCols).toBe(3);
+      expect(f.sheetRows).toBe(8);
+      expect(f.sheetTopMarginMm).toBe(-10);
+      expect(f.sheetBarcodeOffsetMm).toBe(0);
+      expect(f.sheetHorizontalOffsetMm).toBe(3);
+    });
+
+    it('70×25 sheet format uses a4-label-sheet mode with correct grid and dimensions', () => {
+      const f = PRINT_FORMAT_REGISTRY['label-70x25-sheet'];
+      expect(f.mode).toBe('a4-label-sheet');
+      expect(f.widthMm).toBe(70);
+      expect(f.heightMm).toBe(25);
+      expect(f.sheetCols).toBe(3);
+      expect(f.sheetRows).toBe(8);
+      expect(f.sheetTopMarginMm).toBe(-13);
+      expect(f.sheetBarcodeOffsetMm).toBe(0);
+      expect(f.sheetHorizontalOffsetMm).toBe(5.5);
+    });
+
+    it('40×21 sheet format uses a4-label-sheet mode with correct grid and dimensions', () => {
+      const f = PRINT_FORMAT_REGISTRY['label-40x21'];
+      expect(f.mode).toBe('a4-label-sheet');
+      expect(f.widthMm).toBe(40);
+      expect(f.heightMm).toBe(21);
+      expect(f.sheetCols).toBe(5);
+      expect(f.sheetRows).toBe(14);
+      expect(f.sheetTopMarginMm).toBe(-13);
+      expect(f.sheetBarcodeOffsetMm).toBe(0);
+      expect(f.sheetHorizontalOffsetMm).toBe(5.5);
     });
   });
 
@@ -69,7 +107,7 @@ describe('printFormats', () => {
     });
 
     it('barcode that exceeds 40x21 label width', () => {
-      // 50mm wide barcode at 300 DPI ≈ 591 px, label printable = 36mm
+      // 50mm wide barcode at 300 DPI ≈ 591 px, label printable = 37mm
       const widthPx = 591;
       const heightPx = 100;
       const result = checkBarcodeFit(widthPx, heightPx, 300, label40x21);
@@ -78,7 +116,7 @@ describe('printFormats', () => {
     });
 
     it('barcode that exceeds 40x21 label height', () => {
-      // 20mm tall barcode at 300 DPI ≈ 236 px, label printable height = 17mm
+      // 20mm tall barcode at 300 DPI ≈ 236 px, label printable height = 18mm
       const heightPx = 236;
       const widthPx = 100;
       const result = checkBarcodeFit(widthPx, heightPx, 300, label40x21);
@@ -119,7 +157,7 @@ describe('printFormats', () => {
 
     it('generates label-sized @page for 40x21', () => {
       const css = generatePageCSS(PRINT_FORMAT_REGISTRY['label-40x21']);
-      expect(css).toBe('@page { size: 40mm 21mm; margin: 2mm; }');
+      expect(css).toBe('@page { size: 40mm 21mm; margin: 1.5mm; }');
     });
 
     it('generates A4 @page', () => {
@@ -243,6 +281,138 @@ describe('printFormats', () => {
       const opts = constructorCalls[0][0] as { format: string; orientation: string };
       expect(opts.format).toBe('a4');
       expect(opts.orientation).toBe('portrait');
+    });
+  });
+
+  describe('generatePrintPdf — a4-label-sheet mode', () => {
+    interface JsPdfMockInstance {
+      addPage: ReturnType<typeof vi.fn>;
+      addImage: ReturnType<typeof vi.fn>;
+      setDrawColor: ReturnType<typeof vi.fn>;
+      setLineWidth: ReturnType<typeof vi.fn>;
+      rect: ReturnType<typeof vi.fn>;
+      setFontSize: ReturnType<typeof vi.fn>;
+      setFont: ReturnType<typeof vi.fn>;
+      setTextColor: ReturnType<typeof vi.fn>;
+      text: ReturnType<typeof vi.fn>;
+      output: ReturnType<typeof vi.fn>;
+    }
+    const constructorCalls: unknown[][] = [];
+    let lastInstance: JsPdfMockInstance | null = null;
+
+    beforeEach(() => {
+      constructorCalls.length = 0;
+      lastInstance = null;
+      vi.resetModules();
+      vi.doMock('jspdf', () => {
+        class JsPDFMock {
+          addPage = vi.fn();
+          addImage = vi.fn();
+          setDrawColor = vi.fn();
+          setLineWidth = vi.fn();
+          rect = vi.fn();
+          setFontSize = vi.fn();
+          setFont = vi.fn();
+          setTextColor = vi.fn();
+          text = vi.fn();
+          output = vi.fn(() => new ArrayBuffer(8));
+          constructor(opts: unknown) {
+            constructorCalls.push([opts]);
+            lastInstance = this as unknown as JsPdfMockInstance;
+          }
+        }
+        return { jsPDF: JsPDFMock };
+      });
+
+      vi.spyOn(window, 'open').mockImplementation(() => null);
+      URL.createObjectURL = vi.fn(() => 'blob:fake') as typeof URL.createObjectURL;
+      URL.revokeObjectURL = vi.fn() as typeof URL.revokeObjectURL;
+    });
+
+    const item = (label?: string) => ({
+      dataUrl: 'data:image/png;base64,AAAA',
+      widthPx: 400,
+      heightPx: 150,
+      dpi: 300,
+      label,
+    });
+
+    it('creates an A4 portrait jsPDF for a4-label-sheet format', async () => {
+      const { generatePrintPdf: gen } = await import('./printFormats');
+      const fmt = PRINT_FORMAT_REGISTRY['label-70x35-sheet'];
+      await gen([item()], fmt);
+
+      const opts = constructorCalls[0][0] as { format: string; orientation: string };
+      expect(opts.format).toBe('a4');
+      expect(opts.orientation).toBe('portrait');
+    });
+
+    it('does not draw border rectangles in a4-label-sheet mode', async () => {
+      const { generatePrintPdf: gen } = await import('./printFormats');
+      const fmt = PRINT_FORMAT_REGISTRY['label-70x35-sheet'];
+      await gen([item(), item(), item()], fmt);
+
+      expect(lastInstance!.rect).not.toHaveBeenCalled();
+    });
+
+    it('places 24 items on one page before adding a second page (3×8 grid)', async () => {
+      const { generatePrintPdf: gen } = await import('./printFormats');
+      const fmt = PRINT_FORMAT_REGISTRY['label-70x35-sheet'];
+      const items = Array.from({ length: 25 }, (_, i) => item(`L${i}`));
+      await gen(items, fmt);
+
+      expect(lastInstance!.addPage).toHaveBeenCalledTimes(1);
+      expect(lastInstance!.addImage).toHaveBeenCalledTimes(25);
+    });
+
+    it('centres the label grid horizontally with rightward offset applied', async () => {
+      const { generatePrintPdf: gen } = await import('./printFormats');
+      const fmt = PRINT_FORMAT_REGISTRY['label-70x35-sheet']; // sheetHorizontalOffsetMm = 3
+      await gen([item()], fmt);
+
+      // addImage(dataUrl, 'PNG', x, y, ...) → x is at index 2
+      const xArg = lastInstance!.addImage.mock.calls[0][2] as number;
+      // col=0 → centredX = (210-3*70)/2 + (70 - 33.87)/2 ≈ 18.06
+      // + horizontalOffset(3) = ≈21.06
+      const imgWmm = 400 * 25.4 / 300;
+      const expectedX = (70 - imgWmm) / 2 + 3;
+      expect(xArg).toBeCloseTo(expectedX, 1);
+    });
+
+    it('70×25 sheet: addImage is called with correct dimensions', async () => {
+      const { generatePrintPdf: gen } = await import('./printFormats');
+      const fmt = PRINT_FORMAT_REGISTRY['label-70x25-sheet'];
+      await gen([item()], fmt);
+
+      expect(lastInstance!.addImage).toHaveBeenCalledTimes(1);
+      // drawW and drawH match the item's physical mm size
+      const [,, , , drawW, drawH] = lastInstance!.addImage.mock.calls[0];
+      expect(drawW).toBeCloseTo(400 * 25.4 / 300, 1); // ≈33.87mm
+      expect(drawH).toBeCloseTo(150 * 25.4 / 300, 1); // ≈12.7mm
+    });
+
+    it('negative sheetTopMarginMm positions barcode correctly (not clamped for 70×35)', async () => {
+      const { generatePrintPdf: gen } = await import('./printFormats');
+      const fmt = PRINT_FORMAT_REGISTRY['label-70x35-sheet']; // sheetTopMarginMm = -10
+      // item: 400×150 px at 300 dpi → imgHmm = 12.7mm
+      await gen([item()], fmt);
+
+      const yArg = lastInstance!.addImage.mock.calls[0][3] as number;
+      // cellY = -10, centeredY = -10 + 2 + (31 - 12.7)/2 = 1.15mm
+      // y = max(0, 1.15) = 1.15 (NOT clamped — this is the fix)
+      expect(yArg).toBeCloseTo(1.15, 1);
+      expect(yArg).toBeGreaterThan(0);
+    });
+
+    it('clamps at y=0 (page boundary) for small labels where centering would be negative', async () => {
+      const { generatePrintPdf: gen } = await import('./printFormats');
+      const fmt = PRINT_FORMAT_REGISTRY['label-70x25-sheet']; // sheetTopMarginMm = -10
+      // Large barcode on small label: 400×150 px at 300 dpi → imgH = 12.7mm
+      // centeredY = -10 + 2 + (21-12.7)/2 = -3.85 → clamps to 0
+      await gen([item()], fmt);
+
+      const yArg = lastInstance!.addImage.mock.calls[0][3] as number;
+      expect(yArg).toBe(0);
     });
   });
 });
