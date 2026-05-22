@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState, useEffect, useRef } from 'react';
 import JsBarcode from 'jsbarcode';
 import bwipjs from 'bwip-js';
 import { BarcodeConfig, normalizeForRendering, snapToPixelGrid } from '@/lib/barcodeUtils';
@@ -40,6 +40,72 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
 
   // Calculate pixel snapping for bar width
   const snap = useMemo(() => snapToPixelGrid(config.widthMils, config.dpi), [config.widthMils, config.dpi]);
+
+  // -------------------------------------------------------------------------
+  // Effects-baked preview
+  // -------------------------------------------------------------------------
+  // When effects.rotation !== 0 or effects.perspective > 0, applying the
+  // rotation via CSS `transform` forces the browser to promote the wrapper
+  // to its own compositor layer; the SVG inside is then rasterised ONCE at
+  // its small intrinsic size and the resulting bitmap is rotated. That
+  // bitmap-rotation is what produces the wavy / blurry bars in the preview.
+  //
+  // Workaround: when rotation/perspective is active, bake the entire effects
+  // pipeline to a high-resolution PNG via renderExportCanvas (which already
+  // supersamples inside applyEffects) and display that PNG with NO CSS
+  // transform. The on-screen result then matches the exported PNG exactly
+  // and the bars stay sharp at any angle.
+  const usesBakedPreview = effects.enableEffects && (effects.rotation !== 0 || effects.perspective > 0);
+  const [bakedPreviewUrl, setBakedPreviewUrl] = useState<string | null>(null);
+
+  // Capture the latest renderExportCanvas in a ref so the bake-effect can
+  // depend on the actual inputs (config, effects) instead of the function
+  // identity, which is recreated on every render.
+  const renderExportCanvasRef = useRef(renderExportCanvas);
+  renderExportCanvasRef.current = renderExportCanvas;
+
+  useEffect(() => {
+    if (!usesBakedPreview || !isValid || !config.text.trim() || renderError) {
+      setBakedPreviewUrl(prev => {
+        if (prev && prev.startsWith('blob:')) URL.revokeObjectURL(prev);
+        return null;
+      });
+      return;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      try {
+        const canvas = await renderExportCanvasRef.current();
+        if (cancelled || !canvas) return;
+        canvas.toBlob((blob) => {
+          if (cancelled || !blob) {
+            if (canvas) { canvas.width = 0; canvas.height = 0; }
+            return;
+          }
+          const url = URL.createObjectURL(blob);
+          setBakedPreviewUrl(prev => {
+            if (prev && prev.startsWith('blob:')) URL.revokeObjectURL(prev);
+            return url;
+          });
+          canvas.width = 0;
+          canvas.height = 0;
+        }, 'image/png');
+      } catch (e) {
+        console.error('Effects preview bake error:', e);
+      }
+    }, 120);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [usesBakedPreview, isValid, renderError, config, effects, barcodeText]);
+
+  // Release the blob URL on unmount
+  useEffect(() => {
+    return () => {
+      setBakedPreviewUrl(prev => {
+        if (prev && prev.startsWith('blob:')) URL.revokeObjectURL(prev);
+        return null;
+      });
+    };
+  }, []);
 
   const downloadBarcode = async () => {
     // Always export as PNG. For 1D barcodes the source render goes through
@@ -133,6 +199,10 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
       let dataUrl: string;
       let widthPx: number;
       let heightPx: number;
+      // DPI to embed in the PDF for this image. When effects.scale is active
+      // the rendered canvas has more pixels per mm — bump DPI accordingly so
+      // jsPDF places the image at the same physical size.
+      let printDpi: number = config.dpi;
 
       // Helper to apply the quality blur (B/C) to a raw PNG dataUrl before
       // it goes into the PDF. Mirrors the preview's CSS blur so the printed
@@ -161,7 +231,24 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
         return out;
       };
 
-      if (is2D) {
+      if (effects.enableEffects) {
+        // Route the print through the effects pipeline (renderExportCanvas
+        // applies rotation, perspective, contrast, blur, noise, quality
+        // blur). This preserves the rotation / blur the user configured —
+        // previously the print path bypassed every effect, producing an
+        // axis-aligned crisp barcode regardless of the UI sliders.
+        const exportCanvas = await renderExportCanvas();
+        if (!exportCanvas) {
+          toast.error('Failed to render barcode for print');
+          return;
+        }
+        dataUrl = exportCanvas.toDataURL('image/png');
+        widthPx = exportCanvas.width;
+        heightPx = exportCanvas.height;
+        printDpi = Math.round(config.dpi * effects.scale);
+        exportCanvas.width = 0;
+        exportCanvas.height = 0;
+      } else if (is2D) {
         // 2D barcode: render via bwip-js to canvas
         const tempCanvas = document.createElement('canvas');
         const bwipOptions: Record<string, unknown> = {
@@ -185,6 +272,7 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
         heightPx = tempCanvas.height;
         tempCanvas.width = 0;
         tempCanvas.height = 0;
+        dataUrl = await applyQualityBlur(dataUrl, widthPx, heightPx);
       } else {
         // 1D barcode: render via JsBarcode to SVG, then rasterize to PNG
         const tempSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -206,9 +294,8 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
         dataUrl = result.dataUrl;
         widthPx = result.widthPx;
         heightPx = result.heightPx;
+        dataUrl = await applyQualityBlur(dataUrl, widthPx, heightPx);
       }
-
-      dataUrl = await applyQualityBlur(dataUrl, widthPx, heightPx);
 
       // Overflow check — never scale, block if too large. Scaling shrinks
       // bar widths below the configured X-dimension and breaks scannability,
@@ -216,7 +303,7 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
       // (mils) and bar height that would actually fit.
       // Skip overflow check for a4-label-sheet mode (scale-down handles it).
       if (printFormat.mode !== 'a4-label-sheet') {
-        const fit = checkBarcodeFit(widthPx, heightPx, config.dpi, printFormat);
+        const fit = checkBarcodeFit(widthPx, heightPx, printDpi, printFormat);
         if (!fit.fits) {
           const widthRatio = fit.printableWidthMm / fit.barcodeWidthMm;
           const heightRatio = fit.printableHeightMm / fit.barcodeHeightMm;
@@ -237,7 +324,7 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
 
       // Generate PDF and open in new tab for printing
       await generatePrintPdf(
-        [{ dataUrl, widthPx, heightPx, dpi: config.dpi, label: barcodeText }],
+        [{ dataUrl, widthPx, heightPx, dpi: printDpi, label: barcodeText }],
         printFormat,
       );
     } catch (error) {
@@ -328,6 +415,23 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
             </div>
             <p className="font-semibold">Render Error</p>
             <p className="text-sm">{renderError}</p>
+          </div>
+        ) : usesBakedPreview ? (
+          // Rotation/perspective active: show the high-resolution baked PNG
+          // produced by renderExportCanvas (rotation already in pixels), with
+          // NO CSS transform so the browser does not bitmap-rotate the layer.
+          // This is what eliminates the wavy/blurry bars at an angle.
+          <div className="barcode-platform p-6 rounded-2xl relative z-10">
+            {bakedPreviewUrl ? (
+              <img
+                src={bakedPreviewUrl}
+                alt="Barcode preview"
+                className="max-w-full block"
+                style={{ imageRendering: 'auto' }}
+              />
+            ) : (
+              <div className="text-muted-foreground">Rendering effects…</div>
+            )}
           </div>
         ) : (
           <div 

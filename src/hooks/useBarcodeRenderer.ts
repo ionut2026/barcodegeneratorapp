@@ -47,6 +47,91 @@ export function snapSvgToPixels(svg: SVGSVGElement): void {
   });
 }
 
+/**
+ * Supersample factor used when rasterising a rotated SVG. Inflating
+ * width/height (but not viewBox) makes the SVG renderer draw vector content
+ * into a denser bitmap, so a 2 px-wide bar rotated to a steep angle gets
+ * ~8 source pixels for anti-aliasing along its diagonal edge instead of ~2.
+ * The denser bitmap is then downsampled to the target canvas size with
+ * high-quality smoothing, yielding clean rotated bars at any angle.
+ */
+export const SVG_ROTATION_SUPERSAMPLE = 4;
+
+/**
+ * Bake a rotation into the SVG itself as a vector transform.
+ *
+ * Wraps the SVG's children in a `<g transform="translate(dx,dy) rotate(θ,cx,cy)">`
+ * and expands the SVG's width / height / viewBox to fit the rotated bounding
+ * box. The SVG renderer then rasterises the bars and text *vector-sharp at the
+ * rotated angle*, eliminating the bitmap-rotation aliasing that supersampled
+ * canvas rotation can only partially mask.
+ *
+ * Additionally, when `supersample` > 1, the SVG's `width`/`height` attributes
+ * are inflated by that factor while `viewBox` stays at the natural rotated
+ * bbox. The browser then rasterises vector content at `supersample`× the
+ * intrinsic pixel density (more pixels per bar module → clean diagonal AA).
+ *
+ * Bars also have `shape-rendering` switched to `geometricPrecision` so the
+ * rotated edges anti-alias correctly (crispEdges would defeat the point).
+ *
+ * Returns true if rotation was applied, false on a no-op (angle ≈ 0 or no
+ * usable SVG dimensions).
+ */
+export function bakeSvgRotation(
+  svg: SVGSVGElement,
+  rotationDeg: number,
+  supersample = 1,
+): boolean {
+  if (!rotationDeg || Math.abs(rotationDeg) < 0.001) return false;
+
+  const widthAttr = parseFloat(svg.getAttribute('width') || '0');
+  const heightAttr = parseFloat(svg.getAttribute('height') || '0');
+  let w = widthAttr;
+  let h = heightAttr;
+  if ((!w || !h) && svg.getAttribute('viewBox')) {
+    const vb = (svg.getAttribute('viewBox') || '').split(/[\s,]+/).map(parseFloat);
+    if (vb.length === 4) { w = vb[2]; h = vb[3]; }
+  }
+  if (!w || !h) return false;
+
+  const theta = (rotationDeg * Math.PI) / 180;
+  const cosT = Math.abs(Math.cos(theta));
+  const sinT = Math.abs(Math.sin(theta));
+  const newW = Math.ceil(w * cosT + h * sinT);
+  const newH = Math.ceil(w * sinT + h * cosT);
+  const dx = (newW - w) / 2;
+  const dy = (newH - h) / 2;
+
+  const NS = 'http://www.w3.org/2000/svg';
+  const wrapper = document.createElementNS(NS, 'g');
+  // translate moves the original (un-rotated) content to the centre of the
+  // expanded viewBox; rotate then pivots around that centre.
+  wrapper.setAttribute(
+    'transform',
+    `translate(${dx}, ${dy}) rotate(${rotationDeg}, ${w / 2}, ${h / 2})`,
+  );
+
+  while (svg.firstChild) {
+    wrapper.appendChild(svg.firstChild);
+  }
+  svg.appendChild(wrapper);
+
+  const ss = Math.max(1, supersample);
+  // viewBox stays at the natural rotated bbox; only the rasterisation size
+  // (width / height) is inflated, so the SVG renderer draws at higher pixel
+  // density without changing any layout coordinates.
+  svg.setAttribute('width', String(newW * ss));
+  svg.setAttribute('height', String(newH * ss));
+  svg.setAttribute('viewBox', `0 0 ${newW} ${newH}`);
+
+  // Anti-alias rotated edges (crispEdges would re-introduce stair-stepping).
+  svg.querySelectorAll('rect').forEach(rect => {
+    rect.setAttribute('shape-rendering', 'geometricPrecision');
+  });
+
+  return true;
+}
+
 export function useBarcodeRenderer(
   config: BarcodeConfig,
   effects: ImageEffectsConfig,
@@ -100,12 +185,23 @@ export function useBarcodeRenderer(
         font: 'JetBrains Mono',
       });
       snapSvgToPixels(svgRef.current);
+      // When the preview is rotated (or perspective-skewed) via CSS, crispEdges
+      // produces severe stair-stepping on the no-longer-axis-aligned bars.
+      // Switch to geometricPrecision so the browser anti-aliases the rotated
+      // raster. Axis-aligned (rotation=0, perspective=0) keeps crispEdges for
+      // pixel-perfect bars.
+      const previewRotated = effects.enableEffects && (effects.rotation !== 0 || effects.perspective > 0);
+      if (previewRotated) {
+        svgRef.current.querySelectorAll('rect').forEach(rect => {
+          rect.setAttribute('shape-rendering', 'geometricPrecision');
+        });
+      }
       setRenderError(null);
     } catch (error) {
       console.error('Barcode render error:', error);
       setRenderError(error instanceof Error ? error.message : 'Failed to render barcode');
     }
-  }, [config, isValid, barcodeText, effectiveWidth, is2D, config.scale]);
+  }, [config, isValid, barcodeText, effectiveWidth, is2D, config.scale, effects.enableEffects, effects.rotation, effects.perspective]);
 
   // Render 2D barcodes with bwip-js
   useEffect(() => {
@@ -145,51 +241,121 @@ export function useBarcodeRenderer(
   // CRITICAL: applyEffects and renderExportCanvas share a closure over `effects`
   // and `config.background`. They must stay in the same hook to avoid stale-closure
   // bugs in PNG exports when effects change between renders.
-  const applyEffects = useCallback((ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, img: HTMLImageElement) => {
-    const scaledWidth = Math.round(img.width * effects.scale);
-    const scaledHeight = Math.round(img.height * effects.scale);
+  //
+  // `fxOverride` lets callers run the effects pipeline with a different effects
+  // object than the current state. Used to skip the canvas rotation step when
+  // rotation has already been baked into the source SVG as a vector transform
+  // (gives perfect bar quality at any angle, no bitmap aliasing).
+  const applyEffects = useCallback((
+    ctx: CanvasRenderingContext2D,
+    canvas: HTMLCanvasElement,
+    img: HTMLImageElement,
+    fxOverride?: ImageEffectsConfig,
+  ) => {
+    const fx = fxOverride ?? effects;
+    const scaledWidth = Math.round(img.width * fx.scale);
+    const scaledHeight = Math.round(img.height * fx.scale);
 
-    canvas.width = scaledWidth;
-    canvas.height = scaledHeight;
+    // Expand the destination canvas to fit the rotated/skewed content so
+    // corners are not clipped. For rotation θ the bounding box is
+    // w·|cosθ| + h·|sinθ|  ×  w·|sinθ| + h·|cosθ|. Perspective skew adds a
+    // small horizontal extent on each side. When no rotation/perspective is
+    // active we keep the original axis-aligned dimensions (pixel-perfect).
+    const theta = (fx.rotation * Math.PI) / 180;
+    const cosT = Math.abs(Math.cos(theta));
+    const sinT = Math.abs(Math.sin(theta));
+    const skewAmount = fx.perspective > 0 ? fx.perspective * 0.01 : 0;
+    const perspectivePad = Math.ceil(scaledHeight * Math.abs(skewAmount * 0.3));
+    const targetWidth = Math.max(
+      1,
+      Math.round(scaledWidth * cosT + scaledHeight * sinT) + perspectivePad * 2,
+    );
+    const targetHeight = Math.max(
+      1,
+      Math.round(scaledWidth * sinT + scaledHeight * cosT)
+        + Math.ceil(scaledWidth * Math.abs(skewAmount * 0.5)),
+    );
 
-    ctx.save();
-    ctx.fillStyle = config.background;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    canvas.width = targetWidth;
+    canvas.height = targetHeight;
 
-    if (effects.rotation !== 0) {
-      ctx.translate(canvas.width / 2, canvas.height / 2);
-      ctx.rotate((effects.rotation * Math.PI) / 180);
-      ctx.translate(-canvas.width / 2, -canvas.height / 2);
+    // When rotation or perspective is applied, drawing the source bitmap once
+    // at the final size produces severe aliasing on the (now diagonal) bar
+    // edges — the "wavy bars" the user sees. Render into a 3× supersample
+    // buffer with high-quality smoothing, then downscale; the two-step
+    // resample gives clean anti-aliased rotated bars without changing the
+    // exported canvas dimensions or DPI.
+    const needsSupersample = fx.rotation !== 0 || fx.perspective > 0;
+    const ss = needsSupersample ? 3 : 1;
+
+    const work: HTMLCanvasElement = needsSupersample ? document.createElement('canvas') : canvas;
+    const workCtx: CanvasRenderingContext2D = needsSupersample
+      ? (work.getContext('2d') as CanvasRenderingContext2D)
+      : ctx;
+    if (needsSupersample) {
+      work.width = targetWidth * ss;
+      work.height = targetHeight * ss;
     }
 
-    if (effects.perspective > 0) {
-      const skewAmount = effects.perspective * 0.01;
-      ctx.transform(1, skewAmount * 0.5, -skewAmount * 0.3, 1, 0, 0);
+    workCtx.save();
+    workCtx.imageSmoothingEnabled = true;
+    workCtx.imageSmoothingQuality = 'high';
+    workCtx.fillStyle = config.background;
+    workCtx.fillRect(0, 0, work.width, work.height);
+
+    // Centre the (un-rotated) bitmap inside the expanded canvas, then rotate
+    // around the canvas centre so the rotation pivots about the bar centre.
+    const drawW = scaledWidth * ss;
+    const drawH = scaledHeight * ss;
+    const baseOffsetX = (work.width - drawW) / 2;
+    const baseOffsetY = (work.height - drawH) / 2;
+
+    if (fx.rotation !== 0) {
+      workCtx.translate(work.width / 2, work.height / 2);
+      workCtx.rotate((fx.rotation * Math.PI) / 180);
+      workCtx.translate(-work.width / 2, -work.height / 2);
     }
 
-    const spacingMultiplier = effects.lineSpacing;
-    const drawWidth = scaledWidth * spacingMultiplier;
-    const offsetX = (scaledWidth - drawWidth) / 2;
+    if (fx.perspective > 0) {
+      workCtx.transform(1, skewAmount * 0.5, -skewAmount * 0.3, 1, 0, 0);
+    }
 
-    ctx.drawImage(img, offsetX, 0, drawWidth, scaledHeight);
+    const spacingMultiplier = fx.lineSpacing;
+    const finalDrawW = drawW * spacingMultiplier;
+    const offsetX = baseOffsetX + (drawW - finalDrawW) / 2;
 
-    if (effects.contrast !== 1 || effects.brightness !== 0) {
+    workCtx.drawImage(img, offsetX, baseOffsetY, finalDrawW, drawH);
+    workCtx.restore();
+
+    if (needsSupersample) {
+      ctx.save();
+      ctx.fillStyle = config.background;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(work, 0, 0, canvas.width, canvas.height);
+      ctx.restore();
+      work.width = 0;
+      work.height = 0;
+    }
+
+    if (fx.contrast !== 1 || fx.brightness !== 0) {
       const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
       const data = imageData.data;
 
       for (let i = 0; i < data.length; i += 4) {
-        data[i]     = Math.min(255, Math.max(0, ((data[i]     - 128) * effects.contrast) + 128 + effects.brightness));
-        data[i + 1] = Math.min(255, Math.max(0, ((data[i + 1] - 128) * effects.contrast) + 128 + effects.brightness));
-        data[i + 2] = Math.min(255, Math.max(0, ((data[i + 2] - 128) * effects.contrast) + 128 + effects.brightness));
+        data[i]     = Math.min(255, Math.max(0, ((data[i]     - 128) * fx.contrast) + 128 + fx.brightness));
+        data[i + 1] = Math.min(255, Math.max(0, ((data[i + 1] - 128) * fx.contrast) + 128 + fx.brightness));
+        data[i + 2] = Math.min(255, Math.max(0, ((data[i + 2] - 128) * fx.contrast) + 128 + fx.brightness));
       }
 
       ctx.putImageData(imageData, 0, 0);
     }
 
-    if (effects.noise > 0) {
+    if (fx.noise > 0) {
       const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
       const data = imageData.data;
-      const noiseAmount = effects.noise * 2.55;
+      const noiseAmount = fx.noise * 2.55;
 
       for (let i = 0; i < data.length; i += 4) {
         const noise = (Math.random() - 0.5) * noiseAmount;
@@ -201,10 +367,8 @@ export function useBarcodeRenderer(
       ctx.putImageData(imageData, 0, 0);
     }
 
-    ctx.restore();
-
-    if (effects.blur > 0) {
-      ctx.filter = `blur(${effects.blur}px)`;
+    if (fx.blur > 0) {
+      ctx.filter = `blur(${fx.blur}px)`;
       ctx.drawImage(canvas, 0, 0);
       ctx.filter = 'none';
     }
@@ -314,6 +478,26 @@ export function useBarcodeRenderer(
         textMargin: 2,
       });
       snapSvgToPixels(tempSvg);
+      // Bake rotation as a vector transform inside the SVG. This makes the
+      // SVG renderer draw bars and text vector-sharp at the rotated angle —
+      // no bitmap aliasing, no waviness, no matter the angle. The canvas
+      // stage below then skips its own rotation step (rotation: 0 override).
+      //
+      // A supersample factor inflates the SVG's rasterisation size (but not
+      // its viewBox), so steep angles still get plenty of source pixels for
+      // clean anti-aliased diagonal edges. The canvas-side scale override
+      // divides by the same factor to keep final output dimensions unchanged.
+      const svgRotated = effects.enableEffects && effects.rotation !== 0
+        ? bakeSvgRotation(tempSvg, effects.rotation, SVG_ROTATION_SUPERSAMPLE)
+        : false;
+      // Perspective (skew) still has to happen on canvas — there's no clean
+      // SVG vector equivalent. Force geometricPrecision in that case too so
+      // the canvas supersampler doesn't smooth pre-aliased input.
+      if (effects.enableEffects && effects.perspective > 0 && !svgRotated) {
+        tempSvg.querySelectorAll('rect').forEach(rect => {
+          rect.setAttribute('shape-rendering', 'geometricPrecision');
+        });
+      }
 
       const svgData = new XMLSerializer().serializeToString(tempSvg);
       const img = new Image();
@@ -323,7 +507,16 @@ export function useBarcodeRenderer(
       await new Promise<void>((resolve, reject) => {
         img.onload = () => {
           if (effects.enableEffects) {
-            applyEffects(exportCtx, exportCanvas, img);
+            // When rotation has been baked into the SVG vector layer, tell
+            // applyEffects to skip its own canvas rotation step (otherwise
+            // we'd double-rotate). The img is now SVG_ROTATION_SUPERSAMPLE×
+            // larger than the target, so divide scale by the same factor to
+            // keep final dimensions identical — drawImage downsamples with
+            // high-quality smoothing, giving clean rotated bars.
+            const fxOverride = svgRotated
+              ? { ...effects, rotation: 0, scale: effects.scale / SVG_ROTATION_SUPERSAMPLE }
+              : undefined;
+            applyEffects(exportCtx, exportCanvas, img, fxOverride);
           } else {
             exportCanvas.width = img.width;
             exportCanvas.height = img.height;
