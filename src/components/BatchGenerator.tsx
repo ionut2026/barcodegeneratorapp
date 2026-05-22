@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { BarcodeFormat, BARCODE_FORMATS, ChecksumType, getApplicableChecksums, applyChecksum, snapToPixelGrid, getDefaultConfig, is2DBarcode } from '@/lib/barcodeUtils';
+import { BarcodeFormat, BARCODE_FORMATS, ChecksumType, getApplicableChecksums, applyChecksum, snapToPixelGrid, getDefaultConfig, is2DBarcode, validateInput } from '@/lib/barcodeUtils';
 import { generateBarcodeImage, generateBarcodeBlob, generateBarcodeSVGBlob, BarcodeImageResult } from '@/lib/barcodeImageGenerator';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -177,6 +177,7 @@ export function BatchGenerator({ onImagesGenerated, onActionsReady }: BatchGener
             const chunk = batch.values.slice(i, i + REGEN_CHUNK_SIZE);
             const chunkResults = await Promise.all(
               chunk.map((val) => {
+                if (!validateInput(val, batch.format, batch.checksumType).valid) return null;
                 const processedVal = applyChecksum(val, batch.format, batch.checksumType);
                 return generateBarcodeImage(processedVal, batch.format, scale, margin, widthMils, dpi, height);
               }),
@@ -233,6 +234,10 @@ export function BatchGenerator({ onImagesGenerated, onActionsReady }: BatchGener
       const chkLabel = getChecksumLabel(format, checksumType);
 
       for (const val of valueList) {
+        // Pre-validate with the active checksum context so codabar + japanNW7 /
+        // mod16Japan length checks and mod11A "X" rejections take effect (these
+        // depend on checksumType, which generateBarcodeImage doesn't know about).
+        if (!validateInput(val, format, checksumType).valid) continue;
         const processed = applyChecksum(val, format, checksumType);
         const result = await generateBarcodeImage(processed, format, scale, margin, widthMils, dpi, height);
         if (result) {
@@ -309,6 +314,7 @@ export function BatchGenerator({ onImagesGenerated, onActionsReady }: BatchGener
         const folder = zip.folder(folderName)!;
 
         for (const val of batch.values) {
+          if (!validateInput(val, batch.format, batch.checksumType).valid) continue;
           const processedVal = applyChecksum(val, batch.format, batch.checksumType);
           // 1D barcodes: export as SVG (vector, physical mm dimensions embedded).
           // 2D barcodes: export as PNG (bwip-js renders to canvas, no SVG output).
@@ -361,6 +367,7 @@ export function BatchGenerator({ onImagesGenerated, onActionsReady }: BatchGener
           : batch.formatLabel;
 
         for (const val of batch.values) {
+          if (!validateInput(val, batch.format, batch.checksumType).valid) continue;
           const processedVal = applyChecksum(val, batch.format, batch.checksumType);
           const result = await generateBarcodeImage(processedVal, batch.format, scale, 0, widthMils, dpi, height);
           if (result) pdfImages.push({ ...result, label });

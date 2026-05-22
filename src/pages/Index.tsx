@@ -12,7 +12,7 @@ import { BarcodeImageResult } from '@/lib/barcodeImageGenerator';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Settings2, Calculator, Sparkles, Layers } from 'lucide-react';
 import { toast } from 'sonner';
-import { PrintFormatId, PRINT_FORMAT_REGISTRY, checkBarcodeFit, generatePrintPdf } from '@/lib/printFormats';
+import { PrintFormatId, PrintFormat, PRINT_FORMAT_REGISTRY, checkBarcodeFit, generatePrintPdf } from '@/lib/printFormats';
 
 const Index = () => {
   const [config, setConfig] = useState<BarcodeConfig>(getDefaultConfig());
@@ -75,6 +75,26 @@ const Index = () => {
       );
     } catch (error) {
       console.error('Batch print error:', error);
+      toast.error('Failed to generate print PDF');
+    }
+  }, [batchImages, config.dpi]);
+
+  const handleBatchCustomPrint = useCallback(async (printFormat: PrintFormat) => {
+    if (batchImages.length === 0) return;
+
+    try {
+      await generatePrintPdf(
+        batchImages.map(img => ({
+          dataUrl: img.dataUrl,
+          widthPx: img.width,
+          heightPx: img.height,
+          dpi: config.dpi,
+          label: img.value,
+        })),
+        printFormat,
+      );
+    } catch (error) {
+      console.error('Batch custom print error:', error);
       toast.error('Failed to generate print PDF');
     }
   }, [batchImages, config.dpi]);
@@ -156,6 +176,7 @@ const Index = () => {
               <BatchPreview
                 images={batchImages}
                 onPrint={handleBatchPrint}
+                onCustomPrint={handleBatchCustomPrint}
                 onDownloadZip={() => batchActions?.downloadAsZip()}
                 onExportPDF={() => batchActions?.exportAsPDF()}
                 isGenerating={batchActions?.isGenerating ?? false}

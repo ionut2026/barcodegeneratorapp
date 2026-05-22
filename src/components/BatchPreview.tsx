@@ -7,14 +7,18 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { PRINT_FORMATS, PrintFormatId } from '@/lib/printFormats';
+import { PRINT_FORMATS, PrintFormatId, PrintFormat } from '@/lib/printFormats';
+import { PrintConfigDialog } from '@/components/PrintConfigDialog';
+import { useState } from 'react';
 import { toast } from 'sonner';
 
 interface BatchPreviewProps {
   images: BarcodeImageResult[];
   onPrint: (format: PrintFormatId) => void;
+  onCustomPrint?: (format: PrintFormat) => void;
   onDownloadZip?: () => void;
   onExportPDF?: () => void;
   isGenerating: boolean;
@@ -22,8 +26,9 @@ interface BatchPreviewProps {
   dpi?: number;
 }
 
-export function BatchPreview({ images, onPrint, onDownloadZip, onExportPDF, isGenerating, actionsDisabled, dpi = 300 }: BatchPreviewProps) {
+export function BatchPreview({ images, onPrint, onCustomPrint, onDownloadZip, onExportPDF, isGenerating, actionsDisabled, dpi = 300 }: BatchPreviewProps) {
   const btnDisabled = isGenerating || actionsDisabled;
+  const [customPrintOpen, setCustomPrintOpen] = useState(false);
 
   const downloadBarcodeImage = (img: BarcodeImageResult) => {
     try {
@@ -212,8 +217,20 @@ export function BatchPreview({ images, onPrint, onDownloadZip, onExportPDF, isGe
                     </div>
                   </DropdownMenuItem>
                 ))}
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => setCustomPrintOpen(true)}>
+                  <div className="flex flex-col">
+                    <span className="font-medium">Custom Print…</span>
+                    <span className="text-xs text-muted-foreground">Configure custom label size & offsets</span>
+                  </div>
+                </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
+            <PrintConfigDialog
+              open={customPrintOpen}
+              onOpenChange={setCustomPrintOpen}
+              onPrint={(format) => onCustomPrint?.(format)}
+            />
           </div>
         )}
       </div>

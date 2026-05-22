@@ -211,6 +211,34 @@ export function useBarcodeRenderer(
   }, [effects, config.background]);
 
   /**
+   * Apply the quality-level blur (A=0, B=0.5, C=1.2 px) to the canvas in place.
+   * Mirrors the preview's CSS `filter: blur(...)` so download / copy / print
+   * PNGs actually reflect the user's quality choice — previously only the
+   * preview was affected.
+   */
+  const applyQualityBlurInPlace = useCallback((canvas: HTMLCanvasElement) => {
+    if (qualityBlur <= 0 || canvas.width === 0 || canvas.height === 0) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    // Render the canvas onto itself through a blur filter. Use a tmp canvas to
+    // avoid the source/destination overlap restriction on canvas.drawImage.
+    const tmp = document.createElement('canvas');
+    tmp.width = canvas.width;
+    tmp.height = canvas.height;
+    const tctx = tmp.getContext('2d');
+    if (!tctx) return;
+    tctx.drawImage(canvas, 0, 0);
+    ctx.save();
+    ctx.filter = `blur(${qualityBlur}px)`;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(tmp, 0, 0);
+    ctx.restore();
+    ctx.filter = 'none';
+    tmp.width = 0;
+    tmp.height = 0;
+  }, [qualityBlur]);
+
+  /**
    * Render a fresh barcode at base DPI resolution for export (download / copy).
    *
    * CRITICAL: No config.scale is applied here.  Each pixel maps 1:1 to a print
@@ -258,6 +286,7 @@ export function useBarcodeRenderer(
         }
         tempCanvas.width = 0;
         tempCanvas.height = 0;
+        applyQualityBlurInPlace(exportCanvas);
         return exportCanvas;
       } catch (e) {
         console.error('Export render error (2D):', e);
@@ -307,6 +336,7 @@ export function useBarcodeRenderer(
         img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('SVG render failed')); };
         img.src = url;
       });
+      applyQualityBlurInPlace(exportCanvas);
       return exportCanvas;
     } catch (e) {
       console.error('Export render error (1D):', e);

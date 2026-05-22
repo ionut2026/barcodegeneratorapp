@@ -1,19 +1,22 @@
 import { useState } from 'react';
-import { Download, Copy, Check, Printer, ChevronDown } from 'lucide-react';
+import { Download, Copy, Check, Printer, ChevronDown, Settings2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { PRINT_FORMATS, PrintFormatId } from '@/lib/printFormats';
+import { PRINT_FORMATS, PrintFormatId, PrintFormat } from '@/lib/printFormats';
+import { PrintConfigDialog } from '@/components/PrintConfigDialog';
 
 interface BarcodeExportActionsProps {
   disabled: boolean;
   onDownload: () => Promise<void>;
   onCopy: () => Promise<void>;
   onPrint: (format: PrintFormatId) => void;
+  onCustomPrint?: (format: PrintFormat) => void;
 }
 
 export function BarcodeExportActions({
@@ -21,8 +24,10 @@ export function BarcodeExportActions({
   onDownload,
   onCopy,
   onPrint,
+  onCustomPrint,
 }: BarcodeExportActionsProps) {
   const [copied, setCopied] = useState(false);
+  const [customDialogOpen, setCustomDialogOpen] = useState(false);
 
   const handleCopy = async () => {
     try {
@@ -31,6 +36,12 @@ export function BarcodeExportActions({
       setTimeout(() => setCopied(false), 2000);
     } catch {
       // Error toast is handled by the onCopy handler in BarcodePreview
+    }
+  };
+
+  const handleCustomPrint = (format: PrintFormat) => {
+    if (onCustomPrint) {
+      onCustomPrint(format);
     }
   };
 
@@ -75,8 +86,21 @@ export function BarcodeExportActions({
               </div>
             </DropdownMenuItem>
           ))}
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onClick={() => setCustomDialogOpen(true)}>
+            <div className="flex items-center gap-2">
+              <Settings2 className="h-4 w-4" />
+              <span className="font-medium">Custom Print…</span>
+            </div>
+          </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+
+      <PrintConfigDialog
+        open={customDialogOpen}
+        onOpenChange={setCustomDialogOpen}
+        onPrint={handleCustomPrint}
+      />
     </div>
   );
 }

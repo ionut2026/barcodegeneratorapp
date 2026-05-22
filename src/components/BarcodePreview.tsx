@@ -11,7 +11,7 @@ import { BarcodeExportActions } from '@/components/BarcodeExportActions';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
-import { PrintFormatId, PRINT_FORMAT_REGISTRY, checkBarcodeFit, generatePrintPdf } from '@/lib/printFormats';
+import { PrintFormatId, PrintFormat, PRINT_FORMAT_REGISTRY, checkBarcodeFit, generatePrintPdf } from '@/lib/printFormats';
 
 interface BarcodePreviewProps {
   config: BarcodeConfig;
@@ -104,12 +104,10 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
   // The barcode is rendered at base DPI (no scale, no effects, margin:0) and
   // placed in the PDF at its exact mm size — never scaled or rotated.
   // pixels = round(widthMils × dpi / 1000) per module → mm = pixels × 25.4 / dpi
-  const printBarcode = async (formatId: PrintFormatId) => {
+  const printWithFormat = async (printFormat: PrintFormat) => {
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext('2d');
     if (!canvas || !ctx) return;
-
-    const printFormat = PRINT_FORMAT_REGISTRY[formatId];
 
     // Helper: rasterize SVG to a PNG data URL via canvas
     const svgToDataUrl = (svgEl: SVGSVGElement): Promise<{ dataUrl: string; widthPx: number; heightPx: number }> => {
@@ -135,6 +133,33 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
       let dataUrl: string;
       let widthPx: number;
       let heightPx: number;
+
+      // Helper to apply the quality blur (B/C) to a raw PNG dataUrl before
+      // it goes into the PDF. Mirrors the preview's CSS blur so the printed
+      // output actually reflects the user's quality choice.
+      const applyQualityBlur = async (srcUrl: string, w: number, h: number): Promise<string> => {
+        if (qualityBlur <= 0) return srcUrl;
+        const blurCanvas = document.createElement('canvas');
+        blurCanvas.width = w;
+        blurCanvas.height = h;
+        const bctx = blurCanvas.getContext('2d');
+        if (!bctx) return srcUrl;
+        await new Promise<void>((resolve, reject) => {
+          const im = new Image();
+          im.onload = () => {
+            bctx.filter = `blur(${qualityBlur}px)`;
+            bctx.drawImage(im, 0, 0);
+            bctx.filter = 'none';
+            resolve();
+          };
+          im.onerror = () => reject(new Error('Quality-blur image load failed'));
+          im.src = srcUrl;
+        });
+        const out = blurCanvas.toDataURL('image/png');
+        blurCanvas.width = 0;
+        blurCanvas.height = 0;
+        return out;
+      };
 
       if (is2D) {
         // 2D barcode: render via bwip-js to canvas
@@ -183,28 +208,31 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
         heightPx = result.heightPx;
       }
 
+      dataUrl = await applyQualityBlur(dataUrl, widthPx, heightPx);
+
       // Overflow check — never scale, block if too large. Scaling shrinks
       // bar widths below the configured X-dimension and breaks scannability,
       // so we refuse the print and tell the user the largest X-dimension
       // (mils) and bar height that would actually fit.
-      const fit = checkBarcodeFit(widthPx, heightPx, config.dpi, printFormat);
-      if (!fit.fits) {
-        const widthRatio = fit.printableWidthMm / fit.barcodeWidthMm;
-        const heightRatio = fit.printableHeightMm / fit.barcodeHeightMm;
-        const limitingRatio = Math.min(widthRatio, heightRatio);
-        // Largest mils and height that would fit — round down so the user's
-        // first retry actually fits rather than landing exactly on the edge.
-        const suggestedMils = Math.max(1, Math.floor(config.widthMils * widthRatio * 10) / 10);
-        const suggestedHeight = Math.max(10, Math.floor(config.height * heightRatio));
-        const action: string[] = [];
-        if (widthRatio < 1) action.push(`X-dim \u2264 ${suggestedMils} mils`);
-        if (heightRatio < 1) action.push(`bar height \u2264 ${suggestedHeight} px`);
-        toast.warning(
-          `Barcode (${fit.barcodeWidthMm.toFixed(1)} \u00d7 ${fit.barcodeHeightMm.toFixed(1)} mm) is too big for ${printFormat.label} (${fit.printableWidthMm.toFixed(1)} \u00d7 ${fit.printableHeightMm.toFixed(1)} mm printable). Set ${action.join(' and ')} to fit.`,
-          { duration: 8000 }
-        );
-        void limitingRatio;
-        return;
+      // Skip overflow check for a4-label-sheet mode (scale-down handles it).
+      if (printFormat.mode !== 'a4-label-sheet') {
+        const fit = checkBarcodeFit(widthPx, heightPx, config.dpi, printFormat);
+        if (!fit.fits) {
+          const widthRatio = fit.printableWidthMm / fit.barcodeWidthMm;
+          const heightRatio = fit.printableHeightMm / fit.barcodeHeightMm;
+          const limitingRatio = Math.min(widthRatio, heightRatio);
+          const suggestedMils = Math.max(1, Math.floor(config.widthMils * widthRatio * 10) / 10);
+          const suggestedHeight = Math.max(10, Math.floor(config.height * heightRatio));
+          const action: string[] = [];
+          if (widthRatio < 1) action.push(`X-dim ≤ ${suggestedMils} mils`);
+          if (heightRatio < 1) action.push(`bar height ≤ ${suggestedHeight} px`);
+          toast.warning(
+            `Barcode (${fit.barcodeWidthMm.toFixed(1)} × ${fit.barcodeHeightMm.toFixed(1)} mm) is too big for ${printFormat.label} (${fit.printableWidthMm.toFixed(1)} × ${fit.printableHeightMm.toFixed(1)} mm printable). Set ${action.join(' and ')} to fit.`,
+            { duration: 8000 }
+          );
+          void limitingRatio;
+          return;
+        }
       }
 
       // Generate PDF and open in new tab for printing
@@ -216,6 +244,15 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
       console.error('Print barcode error:', error);
       toast.error('Failed to generate print PDF');
     }
+  };
+
+  const printBarcode = async (formatId: PrintFormatId) => {
+    const printFormat = PRINT_FORMAT_REGISTRY[formatId];
+    await printWithFormat(printFormat);
+  };
+
+  const customPrintBarcode = async (format: PrintFormat) => {
+    await printWithFormat(format);
   };
 
   const getPreviewStyles = () => {
@@ -259,6 +296,7 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
           onDownload={downloadBarcode}
           onCopy={copyToClipboard}
           onPrint={printBarcode}
+          onCustomPrint={customPrintBarcode}
         />
       </div>
 

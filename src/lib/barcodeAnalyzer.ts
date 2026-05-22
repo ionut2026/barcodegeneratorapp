@@ -171,7 +171,10 @@ export function analyzeBarcode(input: string): AnalysisResult {
   const matches: FormatMatch[] = [];
 
   for (const formatDef of BARCODE_FORMATS) {
-    const validation = validateInput(trimmed, formatDef.value);
+    // Analyzer surfaces "checksum invalid" as a separate field — don't reject
+    // inputs whose user-supplied check digit is wrong, otherwise those formats
+    // would silently disappear from the candidates list.
+    const validation = validateInput(trimmed, formatDef.value, 'none', { strictCheckDigit: false });
     if (!validation.valid) continue;
 
     const checksumResult = evaluateChecksum(trimmed, formatDef.value);

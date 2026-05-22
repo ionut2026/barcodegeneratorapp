@@ -654,11 +654,14 @@ export function calculateUPCChecksum(input: string): number {
 // [regex, sliceEnd] pair: if the input matches the regex, return text.slice(0, sliceEnd).
 
 const NORMALIZE_REGISTRY: Partial<Record<BarcodeFormat, [RegExp, number]>> = {
-  EAN13: [/^\d{13}$/, 12],   // JsBarcode EAN13 expects 12 digits
-  EAN8:  [/^\d{8}$/,  7],    // JsBarcode EAN8 expects 7 digits
-  UPC:   [/^\d{12}$/, 11],   // JsBarcode UPC expects 11 digits
-  UPCE:  [/^\d{8}$/,  7],    // JsBarcode UPC-E expects 6 or 7 digits; 8 = includes check digit
-  ITF14: [/^\d{14}$/, 13],   // JsBarcode ITF14 expects 13 digits
+  EAN13: [/^\d{13}$/, 12],   // JsBarcode EAN13 expects 12 digits (recomputes check)
+  EAN8:  [/^\d{8}$/,  7],    // JsBarcode EAN8 expects 7 digits (recomputes check)
+  UPC:   [/^\d{12}$/, 11],   // JsBarcode UPC expects 11 digits (recomputes check)
+  // UPC-E: JsBarcode accepts 6 digits (no check) OR 8 digits (NS + 6 + check).
+  // Stripping the 8th digit to 7 breaks JsBarcode (it rejects 7-digit input),
+  // so we do NOT normalize UPCE here. The validator already requires the
+  // 8th digit to be a valid check, so JsBarcode receives a well-formed value.
+  ITF14: [/^\d{14}$/, 13],   // JsBarcode ITF14 expects 13 digits (recomputes check)
 };
 
 // Normalize input for JsBarcode: strip check digits so JsBarcode recalculates them
@@ -668,11 +671,40 @@ export function normalizeForRendering(text: string, format: BarcodeFormat): stri
   return text;
 }
 
+// ── UPC-E ↔ UPC-A expansion ───────────────────────────────────────────────────
+// Used by both the renderer and the validator. Mirrors JsBarcode's UPC-E rules
+// (en.wikipedia.org/wiki/Universal_Product_Code#UPC-E) so we can validate the
+// user-supplied check digit before letting JsBarcode silently reject it.
+const UPCE_EXPANSIONS = [
+  'XX00000XXX', 'XX10000XXX', 'XX20000XXX', 'XXX00000XX', 'XXXX00000X',
+  'XXXXX00005', 'XXXXX00006', 'XXXXX00007', 'XXXXX00008', 'XXXXX00009',
+];
+
+export function expandUPCEtoUPCA(middleSix: string, numberSystem: string): string {
+  const lastE = parseInt(middleSix[middleSix.length - 1], 10);
+  const expansion = UPCE_EXPANSIONS[lastE];
+  let body = '';
+  let i = 0;
+  for (const c of expansion) {
+    body += (c === 'X') ? middleSix[i++] : c;
+  }
+  return numberSystem + body;
+}
+
 // ── Input validation registry ─────────────────────────────────────────────────
 // Each entry is a validator function that returns an error result or null (valid).
 
 type ValidationResult = { valid: boolean; message: string };
-type FormatValidator = (text: string, checksumType?: ChecksumType) => ValidationResult | null;
+export interface ValidateOptions {
+  /**
+   * When true (default), validators that know the check-digit algorithm will
+   * reject inputs whose user-supplied check digit doesn't match the computed
+   * one. Set to false for tools (like the format analyzer) that want to
+   * surface a "checksum invalid" state separately rather than reject outright.
+   */
+  strictCheckDigit?: boolean;
+}
+type FormatValidator = (text: string, checksumType: ChecksumType, opts: ValidateOptions) => ValidationResult | null;
 
 const digitsOnly = (label: string): FormatValidator => (text) =>
   /^\d+$/.test(text) ? null : { valid: false, message: `${label} only supports digits (0-9)` };
@@ -680,21 +712,62 @@ const digitsOnly = (label: string): FormatValidator => (text) =>
 const VALIDATION_REGISTRY: Partial<Record<BarcodeFormat, FormatValidator>> = {
   CODE39: (text) =>
     /^[A-Z0-9\-\.\s\$\/\+\%]+$/.test(text) ? null : { valid: false, message: 'CODE 39 only supports A-Z (uppercase), 0-9, -, ., $, /, +, %, and space' },
-  EAN13: (text) =>
-    digitsOnly('EAN-13')(text) ?? (text.length !== 12 && text.length !== 13 ? { valid: false, message: 'EAN-13 requires exactly 12 or 13 digits' } : null),
-  EAN8: (text) =>
-    digitsOnly('EAN-8')(text) ?? (text.length !== 7 && text.length !== 8 ? { valid: false, message: 'EAN-8 requires exactly 7 or 8 digits' } : null),
+  EAN13: (text, _ct, opts) => {
+    const d = digitsOnly('EAN-13')(text, _ct, opts); if (d) return d;
+    if (text.length !== 12 && text.length !== 13) return { valid: false, message: 'EAN-13 requires exactly 12 or 13 digits' };
+    if (text.length === 13 && opts.strictCheckDigit !== false) {
+      const expected = String(calculateEAN13Checksum(text.slice(0, 12)));
+      if (text[12] !== expected) return { valid: false, message: `EAN-13 check digit mismatch: expected ${expected}, got ${text[12]} (enter 12 digits to auto-compute)` };
+    }
+    return null;
+  },
+  EAN8: (text, _ct, opts) => {
+    const d = digitsOnly('EAN-8')(text, _ct, opts); if (d) return d;
+    if (text.length !== 7 && text.length !== 8) return { valid: false, message: 'EAN-8 requires exactly 7 or 8 digits' };
+    if (text.length === 8 && opts.strictCheckDigit !== false) {
+      const expected = String(calculateGS1Mod10(text.slice(0, 7)));
+      if (text[7] !== expected) return { valid: false, message: `EAN-8 check digit mismatch: expected ${expected}, got ${text[7]} (enter 7 digits to auto-compute)` };
+    }
+    return null;
+  },
   EAN5: (text) =>
     /^\d{5}$/.test(text) ? null : { valid: false, message: 'EAN-5 requires exactly 5 digits' },
   EAN2: (text) =>
     /^\d{2}$/.test(text) ? null : { valid: false, message: 'EAN-2 requires exactly 2 digits' },
-  UPC: (text) =>
-    digitsOnly('UPC-A')(text) ?? (text.length !== 11 && text.length !== 12 ? { valid: false, message: 'UPC-A requires exactly 11 or 12 digits' } : null),
-  UPCE: (text) =>
-    digitsOnly('UPC-E')(text) ?? (text.length < 6 || text.length > 8 ? { valid: false, message: 'UPC-E requires 6, 7, or 8 digits' } : null),
-  ITF14: (text) =>
-    digitsOnly('ITF-14')(text) ?? (text.length !== 13 && text.length !== 14 ? { valid: false, message: 'ITF-14 requires exactly 13 or 14 digits' } : null),
-  ITF: (text, checksumType = 'none') => {
+  UPC: (text, _ct, opts) => {
+    const d = digitsOnly('UPC-A')(text, _ct, opts); if (d) return d;
+    if (text.length !== 11 && text.length !== 12) return { valid: false, message: 'UPC-A requires exactly 11 or 12 digits' };
+    if (text.length === 12 && opts.strictCheckDigit !== false) {
+      const expected = String(calculateUPCChecksum(text.slice(0, 11)));
+      if (text[11] !== expected) return { valid: false, message: `UPC-A check digit mismatch: expected ${expected}, got ${text[11]} (enter 11 digits to auto-compute)` };
+    }
+    return null;
+  },
+  UPCE: (text, _ct, opts) => {
+    const d = digitsOnly('UPC-E')(text, _ct, opts); if (d) return d;
+    if (text.length === 6) return null;
+    if (text.length === 8) {
+      if (opts.strictCheckDigit === false) return null;
+      if (text[0] !== '0' && text[0] !== '1') return { valid: false, message: 'UPC-E 8-digit input must start with number system 0 or 1' };
+      const upcA = expandUPCEtoUPCA(text.slice(1, 7), text[0]);
+      const expected = String(calculateUPCChecksum(upcA.slice(0, 11)));
+      if (text[7] !== expected) return { valid: false, message: `UPC-E check digit mismatch: expected ${expected}, got ${text[7]} (enter 6 digits to auto-compute)` };
+      return null;
+    }
+    // 7 chars is ambiguous per UPC-E spec — the 7th digit could be a number-system
+    // prefix or a check suffix. Reject explicitly rather than crashing the renderer.
+    return { valid: false, message: 'UPC-E requires 6 digits (auto-computed check) or 8 digits (number system + 6 + check). 7 digits is ambiguous.' };
+  },
+  ITF14: (text, _ct, opts) => {
+    const d = digitsOnly('ITF-14')(text, _ct, opts); if (d) return d;
+    if (text.length !== 13 && text.length !== 14) return { valid: false, message: 'ITF-14 requires exactly 13 or 14 digits' };
+    if (text.length === 14 && opts.strictCheckDigit !== false) {
+      const expected = String(calculateGS1Mod10(text.slice(0, 13)));
+      if (text[13] !== expected) return { valid: false, message: `ITF-14 check digit mismatch: expected ${expected}, got ${text[13]} (enter 13 digits to auto-compute)` };
+    }
+    return null;
+  },
+  ITF: (text, checksumType) => {
     if (!/^\d+$/.test(text)) return { valid: false, message: 'ITF requires an even number of digits (digits only)' };
     if (checksumType === 'mod10') {
       // With checksum, the check digit is appended to the input. The total must be
@@ -711,24 +784,43 @@ const VALIDATION_REGISTRY: Partial<Record<BarcodeFormat, FormatValidator>> = {
     const num = parseInt(text, 10);
     return isNaN(num) || num < 3 || num > 131070 ? { valid: false, message: 'Pharmacode requires a number between 3 and 131070' } : null;
   },
-  MSI:     (text) => digitsOnly('MSI formats')(text),
-  MSI10:   (text) => digitsOnly('MSI formats')(text),
-  MSI11:   (text) => digitsOnly('MSI formats')(text),
-  MSI1010: (text) => digitsOnly('MSI formats')(text),
-  MSI1110: (text) => digitsOnly('MSI formats')(text),
-  codabar: (text) =>
-    /^[A-Da-d]?[0-9\-\$\:\/\.\+]+[A-Da-d]?$/.test(text) ? null
-      : { valid: false, message: 'Codabar only supports digits (0-9), -, $, :, /, ., + and optional A-D start/stop characters' },
+  MSI:     (text, ct, opts) => digitsOnly('MSI formats')(text, ct, opts),
+  MSI10:   (text, ct, opts) => digitsOnly('MSI formats')(text, ct, opts),
+  MSI11:   (text, ct, opts) => digitsOnly('MSI formats')(text, ct, opts),
+  MSI1010: (text, ct, opts) => digitsOnly('MSI formats')(text, ct, opts),
+  MSI1110: (text, ct, opts) => digitsOnly('MSI formats')(text, ct, opts),
+  codabar: (text, checksumType) => {
+    if (!/^[A-Da-d]?[0-9\-\$\:\/\.\+]+[A-Da-d]?$/.test(text)) {
+      return { valid: false, message: 'Codabar only supports digits (0-9), -, $, :, /, ., + and optional A-D start/stop characters' };
+    }
+    // Spec-driven checksum constraints — without these, the applier silently
+    // returns the text with no check digit and the user thinks the option is broken.
+    if (checksumType === 'japanNW7' && text.length !== 10) {
+      return { valid: false, message: 'Codabar + Japan NW-7 (JIS X 0503) requires exactly 10 characters' };
+    }
+    if (checksumType === 'mod16Japan' && text.length !== 10) {
+      return { valid: false, message: 'Codabar + Modulo 16 Japan (JIS X 0503) requires exactly 10 characters' };
+    }
+    if (checksumType === 'mod11A' && calculateMod11AChecksum(text) === 'X') {
+      return { valid: false, message: 'Codabar + Modulo 11-A: this value yields check digit "X", which is not a valid Codabar character. Try a different value or a different checksum.' };
+    }
+    return null;
+  },
   // CODE93, qrcode, azteccode, datamatrix, pdf417, CODE128: no special validation
 };
 
-export function validateInput(text: string, format: BarcodeFormat, checksumType: ChecksumType = 'none'): ValidationResult {
+export function validateInput(
+  text: string,
+  format: BarcodeFormat,
+  checksumType: ChecksumType = 'none',
+  opts: ValidateOptions = {},
+): ValidationResult {
   if (!text.trim()) {
     return { valid: false, message: 'Please enter a value' };
   }
   const validator = VALIDATION_REGISTRY[format];
   if (validator) {
-    const result = validator(text, checksumType);
+    const result = validator(text, checksumType, opts);
     if (result) return result;
   }
   return { valid: true, message: '' };

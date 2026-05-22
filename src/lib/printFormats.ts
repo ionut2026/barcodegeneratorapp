@@ -139,6 +139,61 @@ export const PRINT_FORMAT_REGISTRY: Record<PrintFormatId, PrintFormat> = {
 
 export const PRINT_FORMATS: PrintFormat[] = Object.values(PRINT_FORMAT_REGISTRY);
 
+/**
+ * Build a PrintFormat object from a user-defined print profile.
+ * This bypasses the static PRINT_FORMAT_REGISTRY and constructs a format
+ * usable by generatePrintPdf() directly.
+ */
+export function buildPrintFormat(profile: {
+  id: string;
+  label: string;
+  description?: string;
+  widthMm: number;
+  heightMm: number;
+  marginMm: number;
+  mode: PrintLayoutMode;
+  sheetCols?: number;
+  sheetRows?: number;
+  // New directional offsets (preferred)
+  offsetTopMm?: number;
+  offsetBottomMm?: number;
+  offsetLeftMm?: number;
+  offsetRightMm?: number;
+  // Legacy fields (backward-compat)
+  sheetTopMarginMm?: number;
+  sheetBarcodeOffsetMm?: number;
+  sheetHorizontalOffsetMm?: number;
+}): PrintFormat {
+  // Map directional offsets → internal PrintFormat fields.
+  // Top offset → sheetTopMarginMm (grid vertical position).
+  // Right minus Left → sheetHorizontalOffsetMm (net horizontal shift).
+  // Legacy fields used as fallback when directional offsets are absent.
+  const hasDirectional = profile.offsetTopMm !== undefined || profile.offsetLeftMm !== undefined || profile.offsetRightMm !== undefined;
+
+  const topMargin = hasDirectional
+    ? (profile.offsetTopMm ?? 0)
+    : profile.sheetTopMarginMm;
+
+  const horizontalOffset = hasDirectional
+    ? (profile.offsetRightMm ?? 0) - (profile.offsetLeftMm ?? 0)
+    : profile.sheetHorizontalOffsetMm;
+
+  return {
+    id: profile.id as PrintFormatId,
+    label: profile.label,
+    description: profile.description ?? 'Custom print profile',
+    widthMm: profile.widthMm,
+    heightMm: profile.heightMm,
+    marginMm: profile.marginMm,
+    mode: profile.mode,
+    sheetCols: profile.sheetCols,
+    sheetRows: profile.sheetRows,
+    sheetTopMarginMm: topMargin,
+    sheetBarcodeOffsetMm: hasDirectional ? (profile.offsetBottomMm ?? 0) : profile.sheetBarcodeOffsetMm,
+    sheetHorizontalOffsetMm: horizontalOffset,
+  };
+}
+
 export interface FitResult {
   fits: boolean;
   barcodeWidthMm: number;

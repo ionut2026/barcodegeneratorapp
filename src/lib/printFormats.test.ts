@@ -415,4 +415,85 @@ describe('printFormats', () => {
       expect(yArg).toBe(0);
     });
   });
+
+  describe('buildPrintFormat', () => {
+    it('returns a PrintFormat with all fields mapped', async () => {
+      const { buildPrintFormat } = await import('./printFormats');
+      const format = buildPrintFormat({
+        id: 'custom-test',
+        label: 'Custom 50×30',
+        description: 'My custom label',
+        widthMm: 50,
+        heightMm: 30,
+        marginMm: 3,
+        mode: 'page-per-label',
+      });
+      expect(format.id).toBe('custom-test');
+      expect(format.label).toBe('Custom 50×30');
+      expect(format.description).toBe('My custom label');
+      expect(format.widthMm).toBe(50);
+      expect(format.heightMm).toBe(30);
+      expect(format.marginMm).toBe(3);
+      expect(format.mode).toBe('page-per-label');
+    });
+
+    it('uses default description when not provided', async () => {
+      const { buildPrintFormat } = await import('./printFormats');
+      const format = buildPrintFormat({
+        id: 'no-desc',
+        label: 'No Desc',
+        widthMm: 100,
+        heightMm: 50,
+        marginMm: 5,
+        mode: 'a4-grid',
+      });
+      expect(format.description).toBe('Custom print profile');
+    });
+
+    it('passes through legacy sheet-specific fields for a4-label-sheet', async () => {
+      const { buildPrintFormat } = await import('./printFormats');
+      const format = buildPrintFormat({
+        id: 'sheet-custom',
+        label: 'Sheet Custom',
+        widthMm: 70,
+        heightMm: 35,
+        marginMm: 2,
+        mode: 'a4-label-sheet',
+        sheetCols: 3,
+        sheetRows: 8,
+        sheetTopMarginMm: -10,
+        sheetBarcodeOffsetMm: 1,
+        sheetHorizontalOffsetMm: 3,
+      });
+      expect(format.sheetCols).toBe(3);
+      expect(format.sheetRows).toBe(8);
+      expect(format.sheetTopMarginMm).toBe(-10);
+      expect(format.sheetBarcodeOffsetMm).toBe(1);
+      expect(format.sheetHorizontalOffsetMm).toBe(3);
+    });
+
+    it('maps directional offsets to internal fields', async () => {
+      const { buildPrintFormat } = await import('./printFormats');
+      const format = buildPrintFormat({
+        id: 'directional',
+        label: 'Directional',
+        widthMm: 70,
+        heightMm: 25,
+        marginMm: 2,
+        mode: 'a4-label-sheet',
+        sheetCols: 3,
+        sheetRows: 8,
+        offsetTopMm: -13,
+        offsetBottomMm: 2,
+        offsetLeftMm: 1,
+        offsetRightMm: 5.5,
+      });
+      // Top offset maps to sheetTopMarginMm
+      expect(format.sheetTopMarginMm).toBe(-13);
+      // Bottom offset maps to sheetBarcodeOffsetMm
+      expect(format.sheetBarcodeOffsetMm).toBe(2);
+      // Net horizontal = right - left
+      expect(format.sheetHorizontalOffsetMm).toBe(4.5);
+    });
+  });
 });
