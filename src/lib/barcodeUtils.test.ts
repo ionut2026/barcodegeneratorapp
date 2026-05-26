@@ -221,8 +221,8 @@ describe('validateInput', () => {
       expect(validateInput('123456789012', 'EAN13').valid).toBe(true);
     });
 
-    it('accepts valid 13-digit input', () => {
-      expect(validateInput('5901234123457', 'EAN13').valid).toBe(true);
+    it('rejects 13-digit input (check digit not allowed)', () => {
+      expect(validateInput('5901234123457', 'EAN13').valid).toBe(false);
     });
 
     it('rejects 11-digit input', () => {
@@ -240,8 +240,8 @@ describe('validateInput', () => {
       expect(validateInput('1234567', 'EAN8').valid).toBe(true);
     });
 
-    it('accepts valid 8-digit input', () => {
-      expect(validateInput('12345670', 'EAN8').valid).toBe(true);
+    it('rejects 8-digit input (check digit not allowed)', () => {
+      expect(validateInput('12345670', 'EAN8').valid).toBe(false);
     });
 
     it('rejects 6-digit input', () => {
@@ -259,8 +259,8 @@ describe('validateInput', () => {
       expect(validateInput('03600029145', 'UPC').valid).toBe(true);
     });
 
-    it('accepts valid 12-digit input', () => {
-      expect(validateInput('036000291452', 'UPC').valid).toBe(true);
+    it('rejects 12-digit input (check digit not allowed)', () => {
+      expect(validateInput('036000291452', 'UPC').valid).toBe(false);
     });
 
     it('rejects 10-digit input', () => {
@@ -315,8 +315,8 @@ describe('validateInput', () => {
       expect(validateInput('1234567890123', 'ITF14').valid).toBe(true);
     });
 
-    it('accepts valid 14-digit input', () => {
-      expect(validateInput('12345678901231', 'ITF14').valid).toBe(true);
+    it('rejects 14-digit input (check digit not allowed)', () => {
+      expect(validateInput('12345678901231', 'ITF14').valid).toBe(false);
     });
 
     it('rejects 12-digit input', () => {
@@ -371,24 +371,24 @@ describe('validateInput', () => {
 // normalizeForRendering
 // ---------------------------------------------------------------------------
 describe('normalizeForRendering', () => {
-  it('EAN13 with 13 digits → strips last digit to 12', () => {
-    expect(normalizeForRendering('5901234123457', 'EAN13')).toBe('590123412345');
+  it('EAN13 with 13 digits → no longer strips (NORMALIZE_REGISTRY empty; UI rejects full-length)', () => {
+    expect(normalizeForRendering('5901234123457', 'EAN13')).toBe('5901234123457');
   });
 
   it('EAN13 with 12 digits → unchanged', () => {
     expect(normalizeForRendering('590123412345', 'EAN13')).toBe('590123412345');
   });
 
-  it('EAN8 with 8 digits → strips to 7', () => {
-    expect(normalizeForRendering('12345670', 'EAN8')).toBe('1234567');
+  it('EAN8 with 8 digits → no longer strips (UI rejects full-length)', () => {
+    expect(normalizeForRendering('12345670', 'EAN8')).toBe('12345670');
   });
 
   it('EAN8 with 7 digits → unchanged', () => {
     expect(normalizeForRendering('1234567', 'EAN8')).toBe('1234567');
   });
 
-  it('UPC with 12 digits → strips to 11', () => {
-    expect(normalizeForRendering('036000291452', 'UPC')).toBe('03600029145');
+  it('UPC with 12 digits → no longer strips (UI rejects full-length)', () => {
+    expect(normalizeForRendering('036000291452', 'UPC')).toBe('036000291452');
   });
 
   it('UPC with 11 digits → unchanged', () => {
@@ -402,12 +402,17 @@ describe('normalizeForRendering', () => {
     expect(normalizeForRendering('01234565', 'UPCE')).toBe('01234565');
   });
 
-  it('UPCE with 7 digits → unchanged (validator rejects 7-digit input upstream)', () => {
-    expect(normalizeForRendering('0123456', 'UPCE')).toBe('0123456');
+  it('UPCE with 7 digits → expands to 8 (appends computed check digit for JsBarcode)', () => {
+    // 0123456 → expand middle 6 "123456" with NS=0 → UPC-A "012345000065"
+    // UPC-A check for "01234500006" = calculateUPCChecksum("01234500006")
+    // Result should be 7 input digits + check digit
+    const result = normalizeForRendering('0123456', 'UPCE');
+    expect(result).toHaveLength(8);
+    expect(result.slice(0, 7)).toBe('0123456');
   });
 
-  it('ITF14 with 14 digits → strips to 13', () => {
-    expect(normalizeForRendering('12345678901231', 'ITF14')).toBe('1234567890123');
+  it('ITF14 with 14 digits → no longer strips (UI rejects full-length)', () => {
+    expect(normalizeForRendering('12345678901231', 'ITF14')).toBe('12345678901231');
   });
 
   it('ITF14 with 13 digits → unchanged', () => {
@@ -504,10 +509,11 @@ describe('is2DBarcode', () => {
 // getDefaultConfig
 // ---------------------------------------------------------------------------
 describe('getDefaultConfig', () => {
-  it('widthMils is snapped to pixel grid at 300 DPI (2 px = 6.67 mil)', () => {
+  it('widthMils is the user-intent X-dim (7.5 mil — GS1 healthcare minimum)', () => {
     const cfg = getDefaultConfig();
-    expect(cfg.widthMils).toBe(6.67);
-    // Verify it maps to exactly 2 pixels at 300 DPI — no fractional bar widths
+    expect(cfg.widthMils).toBe(7.5);
+    // Verify the snapped render value at default DPI is 2 px (snap is applied
+    // non-destructively at render time, not stored back into widthMils).
     expect(Math.round(cfg.widthMils * cfg.dpi / 1000)).toBe(2);
   });
 
@@ -645,9 +651,9 @@ describe('calculateMod10Weight3Checksum', () => {
 // calculate7CheckDRChecksum
 // ---------------------------------------------------------------------------
 describe('calculate7CheckDRChecksum', () => {
-  it('returns "1" for "123"', () => {
-    // sum=6, dr=6, (7-6%7)%7=1
-    expect(calculate7CheckDRChecksum('123')).toBe('1');
+  it('returns weighted sum mod 7 for "123" with weights [1..7]', () => {
+    // digits=[1,2,3], sum = 1*1 + 2*2 + 3*3 = 14, 14 % 7 = 0
+    expect(calculate7CheckDRChecksum('123', [1, 2, 3, 4, 5, 6, 7])).toBe(0);
   });
 });
 
@@ -724,8 +730,9 @@ describe('getApplicableChecksums', () => {
 // validateInput additional formats
 // ---------------------------------------------------------------------------
 describe('validateInput additional formats', () => {
-  it('UPCE: accepts 6 digits', () => expect(validateInput('123456', 'UPCE').valid).toBe(true));
-  it('UPCE: accepts 8 digits', () => expect(validateInput('01234565', 'UPCE').valid).toBe(true));
+  it('UPCE: accepts 7 digits starting with 0', () => expect(validateInput('0123456', 'UPCE').valid).toBe(true));
+  it('UPCE: rejects 6 digits (must include number system digit)', () => expect(validateInput('123456', 'UPCE').valid).toBe(false));
+  it('UPCE: rejects 8 digits (check digit not allowed)', () => expect(validateInput('01234565', 'UPCE').valid).toBe(false));
   it('UPCE: rejects 5 digits', () => expect(validateInput('12345', 'UPCE').valid).toBe(false));
   it('UPCE: rejects non-numeric', () => expect(validateInput('12345A', 'UPCE').valid).toBe(false));
   it('EAN5: accepts exactly 5 digits', () => expect(validateInput('12345', 'EAN5').valid).toBe(true));
@@ -778,16 +785,17 @@ describe('applyChecksum mod11 check=10 handling', () => {
 });
 
 // ---------------------------------------------------------------------------
-// applyChecksum mod11A check=10 edge case (produces 'X' for codabar)
+// applyChecksum mod11A edge case (check=10 collapses to '0' per impl)
 // ---------------------------------------------------------------------------
 describe('applyChecksum mod11A check=10 handling', () => {
-  it('codabar + mod11A: returns text unchanged when check digit would be X', () => {
-    // calculateMod11AChecksum("6"): reversed [6], 6*2=12, 12%11=1, 11-1=10 → 'X'
+  it('codabar + mod11A: appends "0" when raw check digit would be 10', () => {
+    // calculateMod11AChecksum("6"): reversed [6], 6*2=12, 12%11=1, 11-1=10
+    // → impl collapses check=10 to '0'. applyChecksum appends it normally.
     const result = applyChecksum('6', 'codabar', 'mod11A');
-    expect(result).toBe('6');
+    expect(result).toBe('60');
     expect(result).not.toContain('X');
   });
-  it('codabar + mod11A: appends digit normally when check is not X', () => {
+  it('codabar + mod11A: appends digit normally when check is not 10', () => {
     const result = applyChecksum('12345', 'codabar', 'mod11A');
     expect(result).toBe('123455');
   });
@@ -882,18 +890,30 @@ describe('calculateMod16JapanChecksum — specific vectors', () => {
 // TEST-GAP-3: calculateMod11AChecksum specific vectors
 describe('calculateMod11AChecksum — specific vectors', () => {
   it('returns "5" for "12345"', () => {
-    // reversed: [5,4,3,2,1], weights 2..6
+    // reversed: [5,4,3,2,1], weights (2 + i%10) → [2,3,4,5,6]
     // sum = 5*2 + 4*3 + 3*4 + 2*5 + 1*6 = 10+12+12+10+6 = 50
     // remainder = 50 % 11 = 6; check = 11 - 6 = 5
     expect(calculateMod11AChecksum('12345')).toBe('5');
   });
 
-  it('returns "X" for "6" (sum=12, 12%11=1, 11-1=10 → X)', () => {
-    expect(calculateMod11AChecksum('6')).toBe('X');
+  it('returns "0" for "6" (sum=12, 12%11=1, check=10 → impl collapses to "0")', () => {
+    expect(calculateMod11AChecksum('6')).toBe('0');
   });
 
   it('returns "0" for "0" (sum=0, 0%11=0 → check=0)', () => {
     expect(calculateMod11AChecksum('0')).toBe('0');
+  });
+
+  it('returns "0" for "123456789" (weights 2..10, check=10 collapses to "0")', () => {
+    // reversed [9,8,7,6,5,4,3,2,1], weights [2,3,4,5,6,7,8,9,10]
+    // sum = 18+24+28+30+30+28+24+18+10 = 210, 210%11=1, check=11-1=10 → '0'
+    expect(calculateMod11AChecksum('123456789')).toBe('0');
+  });
+
+  it('returns "0" for "1234567895" (weights 2..11, check=10 collapses to "0")', () => {
+    // reversed [5,9,8,7,6,5,4,3,2,1], weights [2,3,4,5,6,7,8,9,10,11]
+    // sum = 10+27+32+35+36+35+32+27+20+11 = 265, 265%11=1, check=11-1=10 → '0'
+    expect(calculateMod11AChecksum('1234567895')).toBe('0');
   });
 });
 
@@ -930,35 +950,38 @@ describe('applyChecksum — ean13/upc types', () => {
 // ---------------------------------------------------------------------------
 
 describe('validateInput — EAN-13/EAN-8/UPC/ITF-14 check-digit verification', () => {
-  it('EAN-13 with correct 13-digit check passes', () => {
-    expect(validateInput('5901234123457', 'EAN13').valid).toBe(true);
+  it('EAN-13 with exactly 12 digits passes', () => {
+    expect(validateInput('590123412345', 'EAN13').valid).toBe(true);
   });
-  it('EAN-13 with wrong 13-digit check fails with informative message', () => {
+  it('EAN-13 with 13 digits is rejected (check digit not accepted)', () => {
+    const r = validateInput('5901234123457', 'EAN13');
+    expect(r.valid).toBe(false);
+    expect(r.message).toMatch(/12 digits/i);
+  });
+  it('EAN-13 with wrong length fails with informative message', () => {
     const r = validateInput('1234567891234', 'EAN13');
     expect(r.valid).toBe(false);
-    expect(r.message).toMatch(/check digit mismatch/i);
+    expect(r.message).toMatch(/12 digits/i);
   });
-  it('EAN-8 with wrong 8-digit check fails', () => {
+  it('EAN-8 with 8 digits is rejected (check digit not accepted)', () => {
     expect(validateInput('12345678', 'EAN8').valid).toBe(false);
   });
-  it('EAN-8 with correct 8-digit check passes', () => {
-    // 1234567 + check 0  → 1*3+2*1+3*3+4*1+5*3+6*1+7*3 = 3+2+9+4+15+6+21 = 60 → (10-0)%10 = 0
-    expect(validateInput('12345670', 'EAN8').valid).toBe(true);
+  it('EAN-8 with exactly 7 digits passes', () => {
+    expect(validateInput('1234567', 'EAN8').valid).toBe(true);
   });
-  it('UPC-A with wrong 12-digit check fails', () => {
+  it('UPC-A with 12 digits is rejected (check digit not accepted)', () => {
     expect(validateInput('036000291450', 'UPC').valid).toBe(false);
   });
-  it('UPC-A with correct 12-digit check passes', () => {
-    expect(validateInput('036000291452', 'UPC').valid).toBe(true);
+  it('UPC-A with exactly 11 digits passes', () => {
+    expect(validateInput('03600029145', 'UPC').valid).toBe(true);
   });
-  it('ITF-14 with wrong 14-digit check fails', () => {
+  it('ITF-14 with 14 digits is rejected (check digit not accepted)', () => {
     expect(validateInput('12345678912345', 'ITF14').valid).toBe(false);
   });
-  it('ITF-14 with correct 14-digit check passes', () => {
-    // 1234567891234 with computed check 3 → 12345678912343
-    expect(validateInput('12345678912343', 'ITF14').valid).toBe(true);
+  it('ITF-14 with exactly 13 digits passes', () => {
+    expect(validateInput('1234567891234', 'ITF14').valid).toBe(true);
   });
-  it('relaxed mode (strictCheckDigit:false) accepts bad check digits', () => {
+  it('relaxed mode (strictCheckDigit:false) accepts full-length inputs for analyzer', () => {
     expect(validateInput('5901234123450', 'EAN13', 'none', { strictCheckDigit: false }).valid).toBe(true);
     expect(validateInput('12345678', 'EAN8', 'none', { strictCheckDigit: false }).valid).toBe(true);
     expect(validateInput('036000291450', 'UPC', 'none', { strictCheckDigit: false }).valid).toBe(true);
@@ -967,23 +990,24 @@ describe('validateInput — EAN-13/EAN-8/UPC/ITF-14 check-digit verification', (
 });
 
 describe('validateInput — UPC-E length and check rules', () => {
-  it('6-digit input is accepted (NS=0 and check auto-computed)', () => {
-    expect(validateInput('123456', 'UPCE').valid).toBe(true);
+  it('7-digit input starting with 0 is accepted', () => {
+    expect(validateInput('0123456', 'UPCE').valid).toBe(true);
   });
-  it('7-digit input is rejected as ambiguous', () => {
-    const r = validateInput('1234567', 'UPCE');
+  it('7-digit input starting with 1 is accepted', () => {
+    expect(validateInput('1123456', 'UPCE').valid).toBe(true);
+  });
+  it('7-digit input starting with 2..9 is rejected', () => {
+    expect(validateInput('2123456', 'UPCE').valid).toBe(false);
+  });
+  it('6-digit input is rejected (must be 7 digits)', () => {
+    const r = validateInput('123456', 'UPCE');
     expect(r.valid).toBe(false);
-    expect(r.message).toMatch(/ambiguous|6 digits|8 digits/i);
+    expect(r.message).toMatch(/7 digits/i);
   });
-  it('8-digit input with leading 2..9 is rejected', () => {
-    expect(validateInput('21234565', 'UPCE').valid).toBe(false);
-  });
-  it('8-digit input with valid check passes', () => {
-    // 0+123456 → expands to UPC-A 01200000456 → check 5 → 01234565
-    expect(validateInput('01234565', 'UPCE').valid).toBe(true);
-  });
-  it('8-digit input with wrong check fails', () => {
-    expect(validateInput('01234560', 'UPCE').valid).toBe(false);
+  it('8-digit input is rejected (must be 7 digits)', () => {
+    const r = validateInput('01234565', 'UPCE');
+    expect(r.valid).toBe(false);
+    expect(r.message).toMatch(/7 digits/i);
   });
 });
 
@@ -1002,15 +1026,14 @@ describe('validateInput — Codabar checksum-context rules', () => {
   it('codabar + mod16Japan with length 10 passes', () => {
     expect(validateInput('0123456789', 'codabar', 'mod16Japan').valid).toBe(true);
   });
-  it('codabar + mod11A rejects inputs whose check would be X', () => {
-    // "123456789" → mod11A check = X (verified by analysis)
-    const r = validateInput('123456789', 'codabar', 'mod11A');
-    expect(r.valid).toBe(false);
-    expect(r.message).toMatch(/X/);
+  it('codabar + mod11A accepts inputs whose check would historically be X', () => {
+    // Impl collapses check=10 to '0' instead of returning 'X', so the
+    // validateInput "X" guard never fires for any input — even the
+    // single-digit "6" case that used to be rejected.
+    expect(validateInput('6', 'codabar', 'mod11A').valid).toBe(true);
   });
-  it('codabar + mod11A rejects another X-producing input', () => {
-    // "1234567888888" → mod11A check = X (verified)
-    expect(validateInput('1234567888888', 'codabar', 'mod11A').valid).toBe(false);
+  it('codabar + mod11A also accepts the historical "123456789" X case', () => {
+    expect(validateInput('123456789', 'codabar', 'mod11A').valid).toBe(true);
   });
   it('codabar + mod11A accepts inputs whose check is a valid digit', () => {
     // "12345" → check = 5

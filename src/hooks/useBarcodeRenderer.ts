@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import JsBarcode from 'jsbarcode';
 import bwipjs from 'bwip-js';
-import { BarcodeConfig, is2DBarcode, normalizeForRendering, applyChecksum, QUALITY_LEVELS } from '@/lib/barcodeUtils';
+import { BarcodeConfig, is2DBarcode, normalizeForRendering, applyChecksum, QUALITY_LEVELS, physicalPxScale } from '@/lib/barcodeUtils';
 import { ImageEffectsConfig } from '@/components/ImageEffects';
 
 export interface UseBarcodeRendererResult {
@@ -150,19 +150,23 @@ export function useBarcodeRenderer(
     return applyChecksum(config.text, config.format, config.checksumType);
   }, [config.text, config.format, config.checksumType]);
 
+  const modulePixels = useMemo(() => {
+    return Math.max(1, Math.round(config.widthMils * config.dpi / 1000));
+  }, [config.widthMils, config.dpi]);
+
+  // qualityBlur is effective blur in pixels: blur-fraction-of-module × module
+  // width in px. Scales naturally with DPI / X-dim so A vs B vs C remain
+  // perceptually distinct at any resolution. Computed AFTER modulePixels.
   const qualityBlur = useMemo(() => {
-    return QUALITY_LEVELS.find(q => q.value === config.quality)?.blur || 0;
-  }, [config.quality]);
+    const fraction = QUALITY_LEVELS.find(q => q.value === config.quality)?.blur ?? 0;
+    return fraction * modulePixels;
+  }, [config.quality, modulePixels]);
 
   const effectiveWidth = useMemo(() => {
     const pixelWidth = config.widthMils * config.dpi / 1000;
     const raw = effects.enableEffects ? pixelWidth * effects.lineThickness : pixelWidth;
     return Math.max(1, Math.round(raw));
   }, [config.widthMils, config.dpi, effects.enableEffects, effects.lineThickness]);
-
-  const modulePixels = useMemo(() => {
-    return Math.max(1, Math.round(config.widthMils * config.dpi / 1000));
-  }, [config.widthMils, config.dpi]);
 
   // Render 1D barcodes with JsBarcode
   useEffect(() => {
@@ -173,15 +177,19 @@ export function useBarcodeRenderer(
 
     try {
       const renderText = normalizeForRendering(barcodeText, config.format);
+      // DPI-stable physical size: height/margin/fontSize are "logical pixels at
+      // BASE_DPI". Multiply by dpi/BASE_DPI so higher DPI yields more pixels for
+      // the same physical mm (sharper print, identical size).
+      const dpiScale = physicalPxScale(config.dpi);
       JsBarcode(svgRef.current, renderText, {
         format: config.format,
         width: Math.max(1, Math.round(effectiveWidth * config.scale)),
-        height: config.height * config.scale,
+        height: config.height * config.scale * dpiScale,
         displayValue: config.displayValue,
-        fontSize: config.fontSize * config.scale,
+        fontSize: config.fontSize * config.scale * dpiScale,
         lineColor: config.lineColor,
         background: config.background,
-        margin: config.margin * config.scale,
+        margin: config.margin * config.scale * dpiScale,
         font: 'JetBrains Mono',
       });
       snapSvgToPixels(svgRef.current);
@@ -211,21 +219,22 @@ export function useBarcodeRenderer(
     }
 
     try {
+      const dpiScale = physicalPxScale(config.dpi);
       const bwipOptions: Record<string, unknown> = {
         bcid: config.format,
         text: barcodeText,
         scale: Math.max(1, Math.round(effectiveWidth * config.scale)),
         includetext: config.displayValue,
-        textsize: Math.round(config.fontSize * config.scale),
+        textsize: Math.max(1, Math.round(config.fontSize * config.scale * dpiScale)),
         textxalign: 'center',
         backgroundcolor: config.background.replace('#', ''),
         barcolor: config.lineColor.replace('#', ''),
-        padding: Math.round(config.margin * config.scale),
+        padding: Math.round(config.margin * config.scale * dpiScale),
       };
 
       if (config.format === 'pdf417') {
-        bwipOptions.height = Math.floor((config.height * config.scale) / 10);
-        bwipOptions.width = Math.floor((config.height * config.scale) / 3);
+        bwipOptions.height = Math.floor((config.height * config.scale * dpiScale) / 10);
+        bwipOptions.width = Math.floor((config.height * config.scale * dpiScale) / 3);
       }
 
       bwipjs.toCanvas(barcodeCanvasRef.current, bwipOptions as unknown as Parameters<typeof bwipjs.toCanvas>[1]);
@@ -419,21 +428,22 @@ export function useBarcodeRenderer(
 
     if (is2D) {
       try {
+        const dpiScale = physicalPxScale(config.dpi);
         const tempCanvas = document.createElement('canvas');
         const bwipOptions: Record<string, unknown> = {
           bcid: config.format,
           text: barcodeText,
           scale: modulePixels,
           includetext: config.displayValue,
-          textsize: config.fontSize,
+          textsize: Math.max(1, Math.round(config.fontSize * dpiScale)),
           textxalign: 'center',
           backgroundcolor: config.background.replace('#', ''),
           barcolor: config.lineColor.replace('#', ''),
-          padding: config.margin,
+          padding: Math.round(config.margin * dpiScale),
         };
         if (config.format === 'pdf417') {
-          bwipOptions.height = Math.floor(config.height / 10);
-          bwipOptions.width = Math.floor(config.height / 3);
+          bwipOptions.height = Math.floor((config.height * dpiScale) / 10);
+          bwipOptions.width = Math.floor((config.height * dpiScale) / 3);
         }
         bwipjs.toCanvas(tempCanvas, bwipOptions as unknown as Parameters<typeof bwipjs.toCanvas>[1]);
 
@@ -464,16 +474,17 @@ export function useBarcodeRenderer(
     // rect elements by snapSvgToPixels so text retains anti-aliasing.
     const renderText = normalizeForRendering(barcodeText, config.format);
     try {
+      const dpiScale = physicalPxScale(config.dpi);
       const tempSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
       JsBarcode(tempSvg, renderText, {
         format: config.format,
         width: modulePixels,
-        height: config.height,
+        height: config.height * dpiScale,
         displayValue: config.displayValue,
-        fontSize: config.fontSize,
+        fontSize: config.fontSize * dpiScale,
         lineColor: config.lineColor,
         background: config.background,
-        margin: config.margin,
+        margin: config.margin * dpiScale,
         font: 'Courier',
         textMargin: 2,
       });

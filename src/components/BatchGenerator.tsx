@@ -67,11 +67,22 @@ function generateRandomForFormat(format: BarcodeFormat, count: number, stringLen
   if (format === 'EAN13') length = 12;
   if (format === 'EAN8') length = 7;
   if (format === 'UPC') length = 11;
+  if (format === 'UPCE') length = 7;
   if (format === 'ITF14') length = 13;
   if (format === 'ITF' && length % 2 !== 0) length = Math.max(2, length - 1);
 
   if (format === 'pharmacode') {
     return Array.from({ length: count }, () => String(Math.floor(Math.random() * 131068) + 3));
+  }
+
+  if (format === 'UPCE') {
+    // UPC-E 7 digits: number system (0 or 1) + 6 data digits
+    return Array.from({ length: count }, () => {
+      const ns = Math.random() < 0.5 ? '0' : '1';
+      let val = ns;
+      for (let i = 0; i < 6; i++) val += String(Math.floor(Math.random() * 10));
+      return val;
+    });
   }
 
   if (format === 'codabar') {
@@ -116,9 +127,11 @@ export function BatchGenerator({ onImagesGenerated, onActionsReady }: BatchGener
   const snap = snapToPixelGrid(widthMils, dpi);
   const [activePreset, setActivePreset] = useState<number | null>(null);
 
+  // See BarcodeControls — widthMils is the user's intent; snapping is applied
+  // non-destructively at render/display time so DPI changes re-snap correctly
+  // (no stale snap-up floors stuck after lowering DPI).
   const setSnappedMils = (mils: number, overrideDpi = dpi) => {
-    const { actualMils } = snapToPixelGrid(mils, overrideDpi);
-    setWidthMils(+actualMils.toFixed(2));
+    setWidthMils(mils);
     if (overrideDpi !== dpi) setDpi(overrideDpi);
   };
 

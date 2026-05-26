@@ -492,14 +492,13 @@ describe('ValidationService.certify', () => {
   });
 
   describe('checksum validation paths', () => {
-    it('valid intrinsic check: EAN13 13-digit with correct check → status valid, grade A', async () => {
-      // 0,1,2,...,9,0,1,2 → EAN-13 check for 012345678901 = 8 → '0123456789012' has check '2' (wrong)
-      // Use known-good GS1 vector: 401234500006 → check = 7 → 4012345000067
+    it('valid intrinsic check: EAN13 12-digit input → status not_applicable, grade A', async () => {
+      // Use 12-digit data input (check digit auto-computed). ZXing returns full 13.
       stubDecode('4012345000067');
-      const cfg = makeConfig('EAN13', '4012345000067', { widthMils: 10, dpi: 300 });
+      const cfg = makeConfig('EAN13', '401234500006', { widthMils: 10, dpi: 300 });
       const cert = await svc.certify(cfg);
-      // After normalize 13→12, validator sees 12 digits → not_applicable (renderer will compute)
-      expect(['valid', 'not_applicable']).toContain(cert.checksumCalculationStatus.status);
+      // validator sees 12 digits → not_applicable (renderer will compute check)
+      expect(cert.checksumCalculationStatus.status).toBe('not_applicable');
       expect(cert.isoGrade).toBe('A');
     });
 

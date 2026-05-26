@@ -10,6 +10,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { PRINT_FORMATS, PrintFormatId, PRINT_FORMAT_REGISTRY, checkBarcodeFit, generatePrintPdf } from '@/lib/printFormats';
+import { physicalPxScale } from '@/lib/barcodeUtils';
 import { toast } from 'sonner';
 
 interface ChecksumVariant {
@@ -108,12 +109,15 @@ export function ChecksumPreview({ variants, inputValue, widthMils = 7.5, dpi = 3
     for (const v of applicable) {
       const tempSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
       try {
+        // DPI-stable physical size: scale baseline height/margin by dpi/BASE_DPI
+        // so higher DPI produces more pixels but the same printed mm.
+        const dpiScale = physicalPxScale(dpi);
         JsBarcode(tempSvg, v.fullValue, {
           format: 'CODE128',
           width: modulePixels,
-          height: 60,
+          height: 60 * dpiScale,
           displayValue: false,
-          margin: 5,
+          margin: 5 * dpiScale,
           lineColor: '#000000',
           background: '#ffffff',
         });

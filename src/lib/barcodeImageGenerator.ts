@@ -1,6 +1,6 @@
 import JsBarcode from 'jsbarcode';
 import bwipjs from 'bwip-js';
-import { BarcodeFormat, validateInput, normalizeForRendering, is2DBarcode } from '@/lib/barcodeUtils';
+import { BarcodeFormat, validateInput, normalizeForRendering, is2DBarcode, physicalPxScale } from '@/lib/barcodeUtils';
 
 // ── PNG pHYs DPI injection ─────────────────────────────────────────────────────
 // Canvas.toDataURL() produces PNGs without physical resolution metadata.
@@ -196,13 +196,19 @@ export async function generateBarcodeImage(
 
   const modulePixels = Math.max(1, Math.round(widthMils * dpi / 1000));
   const effectiveDpi = dpi * scale;
+  // DPI-stable physical size: height/margin are "logical pixels at BASE_DPI"
+  // — multiply by dpi/BASE_DPI so changing DPI yields more pixels but the
+  // same physical mm (sharper print, identical size).
+  const dpiScale = physicalPxScale(dpi);
+  const renderHeight = height * dpiScale;
+  const renderMargin = margin * dpiScale;
 
   try {
     let raw: { dataUrl: string; width: number; height: number };
     if (is2DBarcode(format)) {
-      raw = render2DToCanvas(value, format, scale, margin, modulePixels);
+      raw = render2DToCanvas(value, format, scale, renderMargin, modulePixels);
     } else {
-      raw = await render1DToCanvas(value, format, scale, margin, modulePixels, height);
+      raw = await render1DToCanvas(value, format, scale, renderMargin, modulePixels, renderHeight);
     }
     return {
       dataUrl: injectPngDpi(raw.dataUrl, effectiveDpi),
@@ -255,18 +261,23 @@ export function generateBarcodeSVGString(
 
   const renderValue = normalizeForRendering(value, format);
   const modulePixels = Math.max(1, Math.round(widthMils * dpi / 1000));
+  // DPI-stable physical size — see generateBarcodeImage for the same rationale.
+  const dpiScale = physicalPxScale(dpi);
+  const renderHeight = height * dpiScale;
+  const renderMargin = margin * dpiScale;
+  const renderFontSize = fontSize * dpiScale;
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
 
   try {
     JsBarcode(svg, renderValue, {
       format,
       width: modulePixels,
-      height,
+      height: renderHeight,
       displayValue,
-      fontSize,
+      fontSize: renderFontSize,
       lineColor,
       background,
-      margin,
+      margin: renderMargin,
       font: 'monospace',
       textMargin: 2,
     });

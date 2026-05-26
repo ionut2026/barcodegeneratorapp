@@ -24,6 +24,8 @@ export interface UserPrintProfile {
   offsetLeftMm?: number;
   /** Per-barcode rightward shift in mm (positive = shift right). */
   offsetRightMm?: number;
+  /** When true, draw a thin border around each label cell on the printed sheet (a4-label-sheet only). */
+  showGrid?: boolean;
   // Legacy fields (kept for backward-compat with previously saved profiles)
   sheetTopMarginMm?: number;
   sheetBarcodeOffsetMm?: number;

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { BarcodeConfig, BarcodeFormat, BARCODE_FORMATS, ChecksumType, getApplicableChecksums, getDefaultConfig, QualityLevel, snapToPixelGrid } from '@/lib/barcodeUtils';
+import { BarcodeConfig, BarcodeFormat, BARCODE_FORMATS, BASE_DPI, ChecksumType, getApplicableChecksums, getDefaultConfig, QualityLevel, snapToPixelGrid } from '@/lib/barcodeUtils';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Slider } from '@/components/ui/slider';
@@ -43,9 +43,13 @@ export function BarcodeControls({ config, onChange, isValid, errorMessage }: Bar
   // Printers can only render integer pixels, so 7.5 mil @ 300 DPI (2.25 px)
   // is impossible — the real module is 2 px = 6.67 mil.  This keeps config
   // in sync with physical reality at all times.
+  // widthMils stores the user's requested X-dim (intent). snapToPixelGrid is
+  // applied non-destructively at render/display time so changing DPI re-snaps
+  // automatically — without writing the snapped value back over the user's
+  // intent (which would prevent going back to a smaller bar after raising DPI
+  // at low DPI snapped the value upward).
   const setSnappedMils = (mils: number, dpi = config.dpi) => {
-    const { actualMils } = snapToPixelGrid(mils, dpi);
-    onChange({ ...config, widthMils: +actualMils.toFixed(2), dpi });
+    onChange({ ...config, widthMils: mils, dpi });
   };
 
   const resetDimensions = () => {
@@ -287,7 +291,7 @@ export function BarcodeControls({ config, onChange, isValid, errorMessage }: Bar
           <div className="space-y-3">
             <div className="flex justify-between text-sm">
               <Label className="text-muted-foreground">Height</Label>
-              <span className="font-mono text-muted-foreground font-medium">{pxToMm(config.height, config.dpi).toFixed(1)}mm</span>
+              <span className="font-mono text-muted-foreground font-medium">{pxToMm(config.height, BASE_DPI).toFixed(1)}mm</span>
             </div>
             <Slider
               value={[config.height]}
@@ -302,7 +306,7 @@ export function BarcodeControls({ config, onChange, isValid, errorMessage }: Bar
           <div className="space-y-3">
             <div className="flex justify-between text-sm">
               <Label className="text-muted-foreground">Margin</Label>
-              <span className="font-mono text-muted-foreground font-medium">{pxToMm(config.margin, config.dpi).toFixed(1)}mm</span>
+              <span className="font-mono text-muted-foreground font-medium">{pxToMm(config.margin, BASE_DPI).toFixed(1)}mm</span>
             </div>
             <Slider
               value={[config.margin]}
@@ -317,7 +321,7 @@ export function BarcodeControls({ config, onChange, isValid, errorMessage }: Bar
           <div className="space-y-3">
             <div className="flex justify-between text-sm">
               <Label className="text-muted-foreground">Font Size</Label>
-              <span className="font-mono text-muted-foreground font-medium">{pxToMm(config.fontSize, config.dpi).toFixed(1)}mm</span>
+              <span className="font-mono text-muted-foreground font-medium">{pxToMm(config.fontSize, BASE_DPI).toFixed(1)}mm</span>
             </div>
             <Slider
               value={[config.fontSize]}

@@ -1,7 +1,7 @@
 import { useMemo, useState, useEffect, useRef } from 'react';
 import JsBarcode from 'jsbarcode';
 import bwipjs from 'bwip-js';
-import { BarcodeConfig, normalizeForRendering, snapToPixelGrid } from '@/lib/barcodeUtils';
+import { BarcodeConfig, normalizeForRendering, snapToPixelGrid, physicalPxScale } from '@/lib/barcodeUtils';
 import { injectPngDpi } from '@/lib/barcodeImageGenerator';
 import { ImageEffectsConfig, getDefaultEffectsConfig } from '@/components/ImageEffects';
 import { AlertCircle, ShieldCheck, FileJson, Loader2 } from 'lucide-react';
@@ -250,21 +250,22 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
         exportCanvas.height = 0;
       } else if (is2D) {
         // 2D barcode: render via bwip-js to canvas
+        const dpiScale = physicalPxScale(config.dpi);
         const tempCanvas = document.createElement('canvas');
         const bwipOptions: Record<string, unknown> = {
           bcid: config.format,
           text: barcodeText,
           scale: modulePixels,
           includetext: config.displayValue,
-          textsize: config.fontSize,
+          textsize: Math.max(1, Math.round(config.fontSize * dpiScale)),
           textxalign: 'center',
           backgroundcolor: config.background.replace('#', ''),
           barcolor: config.lineColor.replace('#', ''),
           padding: 0,
         };
         if (config.format === 'pdf417') {
-          bwipOptions.height = Math.floor(config.height / 10);
-          bwipOptions.width = Math.floor(config.height / 3);
+          bwipOptions.height = Math.floor((config.height * dpiScale) / 10);
+          bwipOptions.width = Math.floor((config.height * dpiScale) / 3);
         }
         bwipjs.toCanvas(tempCanvas, bwipOptions as unknown as Parameters<typeof bwipjs.toCanvas>[1]);
         dataUrl = tempCanvas.toDataURL('image/png');
@@ -275,14 +276,15 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
         dataUrl = await applyQualityBlur(dataUrl, widthPx, heightPx);
       } else {
         // 1D barcode: render via JsBarcode to SVG, then rasterize to PNG
+        const dpiScale = physicalPxScale(config.dpi);
         const tempSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
         const renderText = normalizeForRendering(barcodeText, config.format);
         JsBarcode(tempSvg, renderText, {
           format: config.format,
           width: modulePixels,
-          height: config.height,
+          height: config.height * dpiScale,
           displayValue: config.displayValue,
-          fontSize: config.fontSize,
+          fontSize: config.fontSize * dpiScale,
           lineColor: config.lineColor,
           background: config.background,
           margin: 0,
@@ -300,9 +302,9 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
       // Overflow check — never scale, block if too large. Scaling shrinks
       // bar widths below the configured X-dimension and breaks scannability,
       // so we refuse the print and tell the user the largest X-dimension
-      // (mils) and bar height that would actually fit.
-      // Skip overflow check for a4-label-sheet mode (scale-down handles it).
-      if (printFormat.mode !== 'a4-label-sheet') {
+      // (mils) and bar height that would actually fit. Applies uniformly
+      // to all layout modes, including a4-label-sheet.
+      {
         const fit = checkBarcodeFit(widthPx, heightPx, printDpi, printFormat);
         if (!fit.fits) {
           const widthRatio = fit.printableWidthMm / fit.barcodeWidthMm;
@@ -324,7 +326,7 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
 
       // Generate PDF and open in new tab for printing
       await generatePrintPdf(
-        [{ dataUrl, widthPx, heightPx, dpi: printDpi, label: barcodeText }],
+        [{ dataUrl, widthPx, heightPx, dpi: printDpi, label: config.displayValue ? undefined : barcodeText }],
         printFormat,
       );
     } catch (error) {
@@ -445,7 +447,7 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
                 <div className="text-muted-foreground">Loading...</div>
               )
             ) : (
-              <svg ref={svgRef} />
+              <svg ref={svgRef} className="max-w-full h-auto" />
             )}
           </div>
         )}

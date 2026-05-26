@@ -36,14 +36,17 @@ export function InfoTooltip({ content, className, side = 'left' }: InfoTooltipPr
             "info-tooltip absolute z-50 p-3 rounded-xl text-sm animate-fade-in bg-popover border border-border shadow-lg",
             // CHANGED: Made width flexible with max-width
             "w-auto min-w-[200px] max-w-[300px]",
+            // Anchor tooltip to the top of the button (button is h-6 = 24px) so
+            // it grows downward and never overflows above the parent container.
             side === 'right' 
-              ? "left-full ml-3 top-1/2 -translate-y-1/2"
-              : "right-full mr-3 top-1/2 -translate-y-1/2"
+              ? "left-full ml-3 top-0"
+              : "right-full mr-3 top-0"
           )}
         >
           <div 
             className={cn(
-              "absolute top-1/2 -translate-y-1/2 w-3 h-3 bg-popover border border-border",
+              // Arrow positioned at button's vertical center (12px = h-6 / 2)
+              "absolute top-3 -translate-y-1/2 w-3 h-3 bg-popover border border-border",
               side === 'right'
                 ? "-left-1.5 border-r-0 border-t-0 rotate-45"
                 : "-right-1.5 border-l-0 border-b-0 rotate-45"

@@ -82,6 +82,22 @@ const Index = () => {
   const handleBatchCustomPrint = useCallback(async (printFormat: PrintFormat) => {
     if (batchImages.length === 0) return;
 
+    // Overflow check — refuse rather than silently scale (which would
+    // reduce X-dimension and degrade scannability). Use the largest image
+    // in the batch as the gating dimensions.
+    {
+      const widest = batchImages.reduce((m, i) => (i.width > m.width ? i : m), batchImages[0]);
+      const tallest = batchImages.reduce((m, i) => (i.height > m.height ? i : m), batchImages[0]);
+      const fit = checkBarcodeFit(widest.width, tallest.height, config.dpi, printFormat);
+      if (!fit.fits) {
+        toast.warning(
+          `Barcode (${fit.barcodeWidthMm.toFixed(1)} \u00d7 ${fit.barcodeHeightMm.toFixed(1)} mm) exceeds ${printFormat.label} printable area (${fit.printableWidthMm.toFixed(1)} \u00d7 ${fit.printableHeightMm.toFixed(1)} mm). Reduce bar width or bar height to fit.`,
+          { duration: 8000 }
+        );
+        return;
+      }
+    }
+
     try {
       await generatePrintPdf(
         batchImages.map(img => ({

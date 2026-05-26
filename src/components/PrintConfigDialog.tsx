@@ -24,6 +24,7 @@ import {
 } from '@/components/ui/collapsible';
 import { Separator } from '@/components/ui/separator';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Checkbox } from '@/components/ui/checkbox';
 import { toast } from 'sonner';
 import { PrintFormat, PrintLayoutMode, buildPrintFormat } from '@/lib/printFormats';
 import { UserPrintProfile, loadProfiles, upsertProfile, deleteProfile } from '@/lib/printStorage';
@@ -43,7 +44,7 @@ const DEFAULT_PROFILE: Omit<UserPrintProfile, 'id'> = {
   description: 'Custom label sheet',
   widthMm: 70,
   heightMm: 35,
-  marginMm: 2,
+  marginMm: 0,
   mode: 'a4-label-sheet',
   sheetCols: 3,
   sheetRows: 8,
@@ -51,6 +52,7 @@ const DEFAULT_PROFILE: Omit<UserPrintProfile, 'id'> = {
   offsetBottomMm: 0,
   offsetLeftMm: 0,
   offsetRightMm: 0,
+  showGrid: false,
 };
 
 export function PrintConfigDialog({ open, onOpenChange, onPrint }: PrintConfigDialogProps) {
@@ -58,16 +60,23 @@ export function PrintConfigDialog({ open, onOpenChange, onPrint }: PrintConfigDi
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [form, setForm] = useState<Omit<UserPrintProfile, 'id'>>({ ...DEFAULT_PROFILE });
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  // Per-field raw-string overrides so users can clear/retype numeric inputs
+  // freely (a controlled <input type="number"> bound directly to numeric form
+  // state snaps back when the user clears it, blocking re-entry).
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
 
-  // Load profiles from localStorage when dialog opens
+  // Load profiles from localStorage when dialog opens, and reset the form
+  // to factory defaults so the user always sees the standard starting values
+  // (Profile name "New Custom Label", 70×35 mm, 3×8 grid, etc.) on reopen.
+  // The saved profile list still loads — the user can click a profile to
+  // populate the form with that profile's values.
   useEffect(() => {
     if (open) {
       const loaded = loadProfiles();
       setProfiles(loaded);
-      if (loaded.length > 0 && !selectedId) {
-        setSelectedId(loaded[0].id);
-        setForm(profileToForm(loaded[0]));
-      }
+      setSelectedId(null);
+      setForm({ ...DEFAULT_PROFILE });
+      setDrafts({});
     }
   }, [open]);
 
@@ -75,7 +84,10 @@ export function PrintConfigDialog({ open, onOpenChange, onPrint }: PrintConfigDi
   useEffect(() => {
     if (selectedId) {
       const profile = profiles.find((p) => p.id === selectedId);
-      if (profile) setForm(profileToForm(profile));
+      if (profile) {
+        setForm(profileToForm(profile));
+        setDrafts({}); // clear any in-flight input strings from the previous profile
+      }
     }
   }, [selectedId]);
 
@@ -92,6 +104,7 @@ export function PrintConfigDialog({ open, onOpenChange, onPrint }: PrintConfigDi
     offsetBottomMm: p.offsetBottomMm ?? p.sheetBarcodeOffsetMm ?? 0,
     offsetLeftMm: p.offsetLeftMm ?? 0,
     offsetRightMm: p.offsetRightMm ?? p.sheetHorizontalOffsetMm ?? 0,
+    showGrid: p.showGrid ?? false,
   });
 
   const handleAddNew = useCallback(() => {
@@ -140,6 +153,7 @@ export function PrintConfigDialog({ open, onOpenChange, onPrint }: PrintConfigDi
       offsetBottomMm: form.offsetBottomMm,
       offsetLeftMm: form.offsetLeftMm,
       offsetRightMm: form.offsetRightMm,
+      showGrid: form.showGrid,
     });
     onPrint(format);
     onOpenChange(false);
@@ -153,8 +167,34 @@ export function PrintConfigDialog({ open, onOpenChange, onPrint }: PrintConfigDi
   };
 
   const numField = (key: keyof Omit<UserPrintProfile, 'id'>, value: string) => {
+    // Always remember the raw string so the input can show partial/empty
+    // values (e.g. "", "-", "1.") without snapping back to the last numeric.
+    setDrafts((prev) => ({ ...prev, [key as string]: value }));
     const num = parseFloat(value);
     if (!isNaN(num)) updateField(key, num as never);
+  };
+
+  // Resolve a numeric form field to the string a controlled input should show:
+  // prefer the in-flight draft if present, otherwise the current numeric value.
+  const numValue = (key: keyof Omit<UserPrintProfile, 'id'>): string => {
+    const k = key as string;
+    if (drafts[k] !== undefined) return drafts[k];
+    const v = (form as Record<string, unknown>)[k];
+    return v === undefined || v === null ? '' : String(v);
+  };
+
+  // Commit on blur: if the input is left empty or unparseable, fall back to 0
+  // and clear the draft so the field shows a real numeric value again.
+  const numBlur = (key: keyof Omit<UserPrintProfile, 'id'>) => {
+    const k = key as string;
+    if (drafts[k] === undefined) return;
+    const num = parseFloat(drafts[k]);
+    if (isNaN(num)) updateField(key, 0 as never);
+    setDrafts((prev) => {
+      const next = { ...prev };
+      delete next[k];
+      return next;
+    });
   };
 
   const showSheetFields = form.mode === 'a4-label-sheet';
@@ -244,8 +284,9 @@ export function PrintConfigDialog({ open, onOpenChange, onPrint }: PrintConfigDi
                   type="number"
                   step="0.5"
                   min="10"
-                  value={form.widthMm}
+                  value={numValue('widthMm')}
                   onChange={(e) => numField('widthMm', e.target.value)}
+                  onBlur={() => numBlur('widthMm')}
                   className="h-8 text-sm"
                 />
               </div>
@@ -255,8 +296,9 @@ export function PrintConfigDialog({ open, onOpenChange, onPrint }: PrintConfigDi
                   type="number"
                   step="0.5"
                   min="5"
-                  value={form.heightMm}
+                  value={numValue('heightMm')}
                   onChange={(e) => numField('heightMm', e.target.value)}
+                  onBlur={() => numBlur('heightMm')}
                   className="h-8 text-sm"
                 />
               </div>
@@ -266,8 +308,9 @@ export function PrintConfigDialog({ open, onOpenChange, onPrint }: PrintConfigDi
                   type="number"
                   step="0.5"
                   min="0"
-                  value={form.marginMm}
+                  value={numValue('marginMm')}
                   onChange={(e) => numField('marginMm', e.target.value)}
+                  onBlur={() => numBlur('marginMm')}
                   className="h-8 text-sm"
                 />
               </div>
@@ -282,8 +325,9 @@ export function PrintConfigDialog({ open, onOpenChange, onPrint }: PrintConfigDi
                     type="number"
                     min="1"
                     max="10"
-                    value={form.sheetCols ?? 3}
+                    value={numValue('sheetCols')}
                     onChange={(e) => numField('sheetCols', e.target.value)}
+                    onBlur={() => numBlur('sheetCols')}
                     className="h-8 text-sm"
                   />
                 </div>
@@ -293,8 +337,9 @@ export function PrintConfigDialog({ open, onOpenChange, onPrint }: PrintConfigDi
                     type="number"
                     min="1"
                     max="20"
-                    value={form.sheetRows ?? 8}
+                    value={numValue('sheetRows')}
                     onChange={(e) => numField('sheetRows', e.target.value)}
+                    onBlur={() => numBlur('sheetRows')}
                     className="h-8 text-sm"
                   />
                 </div>
@@ -304,12 +349,21 @@ export function PrintConfigDialog({ open, onOpenChange, onPrint }: PrintConfigDi
             {/* Advanced offsets */}
             {showSheetFields && (
               <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
-                <CollapsibleTrigger asChild>
-                  <Button variant="ghost" size="sm" className="text-xs text-muted-foreground gap-1 px-0">
-                    <Settings2 className="h-3.5 w-3.5" />
-                    {advancedOpen ? 'Hide' : 'Show'} Printer Offsets
-                  </Button>
-                </CollapsibleTrigger>
+                <div className="flex items-center justify-between gap-3">
+                  <CollapsibleTrigger asChild>
+                    <Button variant="ghost" size="sm" className="text-xs text-muted-foreground gap-1 px-0">
+                      <Settings2 className="h-3.5 w-3.5" />
+                      {advancedOpen ? 'Hide' : 'Show'} Printer Offsets
+                    </Button>
+                  </CollapsibleTrigger>
+                  <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none">
+                    <Checkbox
+                      checked={!!form.showGrid}
+                      onCheckedChange={(checked) => updateField('showGrid', checked === true)}
+                    />
+                    Show Label Grid
+                  </label>
+                </div>
                 <CollapsibleContent className="space-y-3 mt-2">
                   <div className="grid grid-cols-2 gap-3">
                     <div>
@@ -317,8 +371,9 @@ export function PrintConfigDialog({ open, onOpenChange, onPrint }: PrintConfigDi
                       <Input
                         type="number"
                         step="0.5"
-                        value={form.offsetTopMm ?? 0}
+                        value={numValue('offsetTopMm')}
                         onChange={(e) => numField('offsetTopMm', e.target.value)}
+                        onBlur={() => numBlur('offsetTopMm')}
                         className="h-8 text-sm"
                       />
                     </div>
@@ -327,8 +382,9 @@ export function PrintConfigDialog({ open, onOpenChange, onPrint }: PrintConfigDi
                       <Input
                         type="number"
                         step="0.5"
-                        value={form.offsetBottomMm ?? 0}
+                        value={numValue('offsetBottomMm')}
                         onChange={(e) => numField('offsetBottomMm', e.target.value)}
+                        onBlur={() => numBlur('offsetBottomMm')}
                         className="h-8 text-sm"
                       />
                     </div>
@@ -337,8 +393,9 @@ export function PrintConfigDialog({ open, onOpenChange, onPrint }: PrintConfigDi
                       <Input
                         type="number"
                         step="0.5"
-                        value={form.offsetLeftMm ?? 0}
+                        value={numValue('offsetLeftMm')}
                         onChange={(e) => numField('offsetLeftMm', e.target.value)}
+                        onBlur={() => numBlur('offsetLeftMm')}
                         className="h-8 text-sm"
                       />
                     </div>
@@ -347,8 +404,9 @@ export function PrintConfigDialog({ open, onOpenChange, onPrint }: PrintConfigDi
                       <Input
                         type="number"
                         step="0.5"
-                        value={form.offsetRightMm ?? 0}
+                        value={numValue('offsetRightMm')}
                         onChange={(e) => numField('offsetRightMm', e.target.value)}
+                        onBlur={() => numBlur('offsetRightMm')}
                         className="h-8 text-sm"
                       />
                     </div>

@@ -54,6 +54,12 @@ export interface PrintFormat {
    * hardware non-printable left margin shifts content leftward on the page.
    */
   sheetHorizontalOffsetMm?: number;
+  /**
+   * When true, draw a thin border around every label cell on the printed
+   * sheet (a4-label-sheet only). Useful for visually verifying that
+   * barcodes are centred within their cells for a given label size.
+   */
+  showGrid?: boolean;
 }
 
 export const PRINT_FORMAT_REGISTRY: Record<PrintFormatId, PrintFormat> = {
@@ -163,6 +169,8 @@ export function buildPrintFormat(profile: {
   sheetTopMarginMm?: number;
   sheetBarcodeOffsetMm?: number;
   sheetHorizontalOffsetMm?: number;
+  // Visualization
+  showGrid?: boolean;
 }): PrintFormat {
   // Map directional offsets → internal PrintFormat fields.
   // Top offset → sheetTopMarginMm (grid vertical position).
@@ -189,8 +197,16 @@ export function buildPrintFormat(profile: {
     sheetCols: profile.sheetCols,
     sheetRows: profile.sheetRows,
     sheetTopMarginMm: topMargin,
-    sheetBarcodeOffsetMm: hasDirectional ? (profile.offsetBottomMm ?? 0) : profile.sheetBarcodeOffsetMm,
+    // NOTE: offsetBottomMm is intentionally NOT mapped to sheetBarcodeOffsetMm.
+    // sheetBarcodeOffsetMm is an internal printer-calibration field that shifts
+    // barcodes UPWARD within their cell — wiring offsetBottomMm to it caused
+    // every barcode to render above cell-centre (visible centering bug).
+    // Bottom offset is now treated as informational only; the row grid already
+    // stacks from the top, so the bottom margin is implicit (pageH − topMargin
+    // − rows·labelH). Legacy fallback is preserved for old saved profiles.
+    sheetBarcodeOffsetMm: hasDirectional ? 0 : profile.sheetBarcodeOffsetMm,
     sheetHorizontalOffsetMm: horizontalOffset,
+    showGrid: profile.showGrid,
   };
 }
 
@@ -391,6 +407,24 @@ export async function generatePrintPdf(
     for (let page = 0; page < totalPages; page++) {
       if (page > 0) pdf.addPage('a4', 'portrait');
 
+      // Optional: draw a thin border around every cell on this page so the
+      // user can visually verify that each barcode is centred inside its
+      // label area. Drawn first so barcodes overlay the lines cleanly.
+      if (format.showGrid) {
+        pdf.setDrawColor(150);
+        pdf.setLineWidth(0.1);
+        for (let slot = 0; slot < perPage; slot++) {
+          const col = slot % cols;
+          const row = Math.floor(slot / cols);
+          const cellX = leftMargin + col * labelW;
+          const cellY = topMargin + row * labelH;
+          // Clip cells that fall outside the printable A4 page (e.g. when
+          // sheetTopMarginMm is negative for printer calibration).
+          if (cellY + labelH <= 0 || cellY >= pageH) continue;
+          pdf.rect(cellX, cellY, labelW, labelH);
+        }
+      }
+
       for (let slot = 0; slot < perPage; slot++) {
         const idx = page * perPage + slot;
         if (idx >= items.length) break;
@@ -405,27 +439,21 @@ export async function generatePrintPdf(
         const cellX = leftMargin + col * labelW;
         const cellY = topMargin + row * labelH;
 
-        // Scale oversized barcodes to fit within the label cell while
-        // preserving aspect ratio. This is necessary for small labels
-        // (e.g. 40×21) where barcodes may exceed cell dimensions.
-        const availW = labelW - 2 * cellMargin;
-        const availH = labelH - 2 * cellMargin;
-        const scaleW = imgWmm > availW ? availW / imgWmm : 1;
-        const scaleH = imgHmm > availH ? availH / imgHmm : 1;
-        const scale = Math.min(scaleW, scaleH);
-        const fittedW = imgWmm * scale;
-        const fittedH = imgHmm * scale;
-
-        // Centre the (possibly scaled) barcode within the cell.
+        // Centre the barcode within the cell at its ORIGINAL configured
+        // physical size. We intentionally never scale here: shrinking the
+        // image would reduce the X-dimension (bar width) below the
+        // configured value and silently degrade scannability. Callers must
+        // pre-flight with checkBarcodeFit() and refuse the print if the
+        // barcode is larger than the label cell.
         const { x, y: centeredY, drawW, drawH } = fitInsideRect(
-          fittedW,
-          fittedH,
+          imgWmm,
+          imgHmm,
           cellX,
           cellY,
           labelW,
           labelH,
           cellMargin,
-          0,
+          item.label ? labelTextH : 0,
         );
 
         // Apply printer calibration offsets:

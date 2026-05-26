@@ -163,8 +163,8 @@ export function normaliseForComparison(text: string, format: BarcodeFormat): str
   }
   if (format === 'UPCE') {
     // ZXing always returns UPC-E as 8 digits: number_system(1) + 6_data + check(1).
-    // JsBarcode accepts 6, 7, or 8 digit inputs. Normalise all forms to the 6-digit
-    // core payload so the comparison is format-agnostic:
+    // JsBarcode accepts 7-digit inputs (NS + 6 data). Normalise all forms to the
+    // 6-digit core payload so the comparison is format-agnostic:
     //   8 digits → strip number system (first) and check (last)
     //   7 digits → strip number system (first)
     //   6 digits → already the payload, no change
@@ -172,6 +172,12 @@ export function normaliseForComparison(text: string, format: BarcodeFormat): str
     if (/^\d{7}$/.test(text)) return text.slice(1);
     return text;
   }
+  // For formats with intrinsic check digits: strip the check digit so ZXing's
+  // full-length decode matches the user's data-only input.
+  if (format === 'EAN13' && /^\d{13}$/.test(text)) return text.slice(0, 12);
+  if (format === 'EAN8'  && /^\d{8}$/.test(text))  return text.slice(0, 7);
+  if (format === 'UPC'   && /^\d{12}$/.test(text)) return text.slice(0, 11);
+  if (format === 'ITF14' && /^\d{14}$/.test(text)) return text.slice(0, 13);
   return normalizeForRendering(text, format);
 }
 

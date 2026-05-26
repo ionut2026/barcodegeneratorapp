@@ -12,6 +12,7 @@ import {
   calculateMod10Weight2Checksum,
   calculateMod10Weight3Checksum,
   calculate7CheckDRChecksum,
+  CHECK_DR_WEIGHTS,
   calculateMod16JapanChecksum,
   calculateEAN13Checksum,
   calculateUPCChecksum,
@@ -119,8 +120,8 @@ export function ChecksumCalculator({ onChecksumData }: ChecksumCalculatorProps) 
       },
       {
         name: '7 Check DR',
-        value: isNumeric ? calculate7CheckDRChecksum(input) : '-',
-        fullValue: isNumeric ? input + calculate7CheckDRChecksum(input) : '-',
+        value: isNumeric ? String(calculate7CheckDRChecksum(input, CHECK_DR_WEIGHTS)) : '-',
+        fullValue: isNumeric ? input + String(calculate7CheckDRChecksum(input, CHECK_DR_WEIGHTS)) : '-',
         applicable: isNumeric,
       },
       {

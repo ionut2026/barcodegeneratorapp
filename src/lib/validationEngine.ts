@@ -30,6 +30,7 @@ import {
   calculateMod10Weight2Checksum,
   calculateMod10Weight3Checksum,
   calculate7CheckDRChecksum,
+  CHECK_DR_WEIGHTS,
   calculateMod16JapanChecksum,
   calculateEAN13Checksum,
   calculateUPCChecksum,
@@ -197,7 +198,7 @@ const OPTIONAL_REGISTRY: Partial<Record<ChecksumType, OptionalEntry>> = {
   mod11A:       { name: 'Mod 11-A',         compute: calculateMod11AChecksum },
   mod10Weight2: { name: 'Mod 10 Weight 2',  compute: calculateMod10Weight2Checksum },
   mod10Weight3: { name: 'Mod 10 Weight 3',  compute: calculateMod10Weight3Checksum },
-  '7CheckDR':   { name: '7 Check DR',       compute: calculate7CheckDRChecksum },
+  '7CheckDR':   { name: '7 Check DR',       compute: (b) => String(calculate7CheckDRChecksum(b, CHECK_DR_WEIGHTS)) },
   mod16Japan:   { name: 'Mod 16 Japan',     compute: calculateMod16JapanChecksum },
   ean13: {
     name: 'EAN-13 Mod 10',
@@ -226,7 +227,10 @@ export class BarcodeValidator {
     format: BarcodeFormat,
     checksumType: ChecksumType = 'none',
   ): ValidationResult {
-    const formatValidation = validateInput(value, format);
+    // Use relaxed format validation — the engine validates already-generated
+    // barcodes that include the computed check digit (full length), so the
+    // strict UI length rules should not apply here.
+    const formatValidation = validateInput(value, format, 'none', { strictCheckDigit: false });
     const warnings = formatValidation.valid ? [] : [formatValidation.message];
 
     // ── Path 1: Intrinsic checksum (EAN, UPC, ITF-14, 2D, encoding-level) ────

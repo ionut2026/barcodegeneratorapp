@@ -490,8 +490,9 @@ describe('printFormats', () => {
       });
       // Top offset maps to sheetTopMarginMm
       expect(format.sheetTopMarginMm).toBe(-13);
-      // Bottom offset maps to sheetBarcodeOffsetMm
-      expect(format.sheetBarcodeOffsetMm).toBe(2);
+      // Bottom offset is intentionally decoupled from sheetBarcodeOffsetMm
+      // (which is an internal upward-correction field) to avoid centering bugs.
+      expect(format.sheetBarcodeOffsetMm).toBe(0);
       // Net horizontal = right - left
       expect(format.sheetHorizontalOffsetMm).toBe(4.5);
     });

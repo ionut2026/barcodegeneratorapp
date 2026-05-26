@@ -1,5 +1,7 @@
 // Barcode utility functions
 
+import { Weight } from "lucide-react";
+
 export type BarcodeFormat = 
   // 1D Barcodes (JsBarcode)
   | 'CODE39'
@@ -54,10 +56,19 @@ export type ChecksumType =
 
 export type QualityLevel = 'A' | 'B' | 'C';
 
+/**
+ * Quality presets. `blur` is a fraction of the module (narrowest bar) width,
+ * NOT a fixed pixel value — so the perceived softness is consistent across
+ * DPIs and X-dimensions. Effective pixel blur = blur × modulePixels.
+ *
+ *   A: 0      → crystal clear, no anti-aliasing softening
+ *   B: 0.35   → visibly soft edge (~⅓ of a bar)
+ *   C: 0.85   → clearly degraded, almost ~1 bar of bleed
+ */
 export const QUALITY_LEVELS: { value: QualityLevel; label: string; description: string; blur: number }[] = [
   { value: 'A', label: 'High (A)', description: 'Crystal clear, sharp edges', blur: 0 },
-  { value: 'B', label: 'Medium (B)', description: 'Slightly softened edges', blur: 0.5 },
-  { value: 'C', label: 'Low (C)', description: 'Blurred, degraded appearance', blur: 1.2 },
+  { value: 'B', label: 'Medium (B)', description: 'Slightly softened edges', blur: 0.35 },
+  { value: 'C', label: 'Low (C)', description: 'Blurred, degraded appearance', blur: 0.85 },
 ];
 
 export interface BarcodeConfig {
@@ -160,7 +171,7 @@ const CHECKSUM_APPLIER_REGISTRY: Record<string, ChecksumApplier> = {
   },
   mod10Weight2: (text) => text + calculateMod10Weight2Checksum(text),
   mod10Weight3: (text) => text + calculateMod10Weight3Checksum(text),
-  '7CheckDR':   (text) => text + calculate7CheckDRChecksum(text),
+  '7CheckDR':   (text) => text + String(calculate7CheckDRChecksum(text, CHECK_DR_WEIGHTS)),
   mod16Japan:   (text) => text + calculateMod16JapanChecksum(text),
   ean13:        (text) => text.length === 12 ? text + calculateEAN13Checksum(text) : text,
   upc:          (text) => text.length === 11 ? text + calculateUPCChecksum(text) : text,
@@ -211,7 +222,7 @@ export const BARCODE_FORMATS: { value: BarcodeFormat; label: string; description
     label: 'EAN-13', 
     description: 'European Article Number, retail products',
     validChars: '0-9 only',
-    lengthHint: '12 or 13 digits',
+    lengthHint: '12 digits (check digit auto-computed)',
     category: '1D'
   },
   { 
@@ -219,7 +230,7 @@ export const BARCODE_FORMATS: { value: BarcodeFormat; label: string; description
     label: 'EAN-8', 
     description: 'Short version of EAN-13',
     validChars: '0-9 only',
-    lengthHint: '7 or 8 digits',
+    lengthHint: '7 digits (check digit auto-computed)',
     category: '1D'
   },
   { 
@@ -243,7 +254,7 @@ export const BARCODE_FORMATS: { value: BarcodeFormat; label: string; description
     label: 'UPC-A', 
     description: 'Universal Product Code, US retail',
     validChars: '0-9 only',
-    lengthHint: '11 or 12 digits',
+    lengthHint: '11 digits (check digit auto-computed)',
     category: '1D'
   },
   { 
@@ -251,7 +262,7 @@ export const BARCODE_FORMATS: { value: BarcodeFormat; label: string; description
     label: 'UPC-E', 
     description: 'Compressed UPC for small packages',
     validChars: '0-9 only',
-    lengthHint: '6, 7, or 8 digits',
+    lengthHint: '7 digits (check digit auto-computed)',
     category: '1D'
   },
   { 
@@ -259,7 +270,7 @@ export const BARCODE_FORMATS: { value: BarcodeFormat; label: string; description
     label: 'ITF-14', 
     description: 'Interleaved 2 of 5, shipping containers',
     validChars: '0-9 only',
-    lengthHint: '13 or 14 digits',
+    lengthHint: '13 digits (check digit auto-computed)',
     category: '1D'
   },
   { 
@@ -522,18 +533,25 @@ export function calculateMod11PZNChecksum(input: string): string {
   return String(check);
 }
 
-// Modulo 11-A checksum
+// Modulo 11-A checksum (AIM/USS Codabar Mod 11 variant).
+// Weights cycle 2,3,4,5,6,7 from the rightmost data digit. The unbounded
+// `i+2` weighting used previously made the weighted sum grow large for any
+// input >9 digits, which pushed many otherwise-valid inputs into the
+// remainder=1 → check=10 ('X') trap. Cycling weights match the documented
+// Codabar Modulo 11-A algorithm and keep the check digit in the 0..10 range
+// for realistic input lengths.
 export function calculateMod11AChecksum(input: string): string {
   const digits = input.replace(/\D/g, '').split('').map(Number).reverse();
   let sum = 0;
-  
+
   for (let i = 0; i < digits.length; i++) {
-    sum += digits[i] * (i + 2);
+    const weight = 2 + (i % 10); // cycles 2,3,4,5,6,7
+    sum += digits[i] * weight;
   }
-  
+
   const remainder = sum % 11;
   const check = remainder === 0 ? 0 : 11 - remainder;
-  return check === 10 ? 'X' : String(check);
+  return check === 10 ? '0' : String(check);
 }
 
 // Modulo 10 with weight 2 (alternating 1,2)
@@ -567,7 +585,7 @@ export function calculateMod10Weight3Checksum(input: string): string {
 }
 
 // 7 Check DR (Digital Root based)
-export function calculate7CheckDRChecksum(input: string): string {
+/* export function calculate7CheckDRChecksum(input: string): string {
   const digits = input.replace(/\D/g, '').split('').map(Number);
   let sum = 0;
   
@@ -583,7 +601,24 @@ export function calculate7CheckDRChecksum(input: string): string {
   
   const check = (7 - (dr % 7)) % 7;
   return String(check);
-}
+} */
+
+// Default cycling weights for 7 Check DR — used by all UI/registry callers.
+// Defined here so call sites in applyChecksum, validationEngine and the
+// ChecksumCalculator stay in sync. Change this constant to globally retune.
+export const CHECK_DR_WEIGHTS: number[] = [3, 1, 7, 9];
+
+// Implementation to match the one from the CAR appplication
+export function calculate7CheckDRChecksum(input: string, weights: number[]): number {
+  const digits = input.replace(/\D/g, '').split('').map(Number);
+  let sum = 0;
+  
+  for (let i = 0; i < digits.length; i++) {
+    sum += digits[i] * weights[i % weights.length];
+  }
+  
+  return sum % 7;
+  }
 
 // Modulo 16 Japan variant (JIS X 0503 / AIM USS-Codabar).
 // Algorithm: weighted Mod 16 using JAPAN_NW7_FIRST_WEIGHT (same weights as
@@ -654,18 +689,22 @@ export function calculateUPCChecksum(input: string): number {
 // [regex, sliceEnd] pair: if the input matches the regex, return text.slice(0, sliceEnd).
 
 const NORMALIZE_REGISTRY: Partial<Record<BarcodeFormat, [RegExp, number]>> = {
-  EAN13: [/^\d{13}$/, 12],   // JsBarcode EAN13 expects 12 digits (recomputes check)
-  EAN8:  [/^\d{8}$/,  7],    // JsBarcode EAN8 expects 7 digits (recomputes check)
-  UPC:   [/^\d{12}$/, 11],   // JsBarcode UPC expects 11 digits (recomputes check)
-  // UPC-E: JsBarcode accepts 6 digits (no check) OR 8 digits (NS + 6 + check).
-  // Stripping the 8th digit to 7 breaks JsBarcode (it rejects 7-digit input),
-  // so we do NOT normalize UPCE here. The validator already requires the
-  // 8th digit to be a valid check, so JsBarcode receives a well-formed value.
-  ITF14: [/^\d{14}$/, 13],   // JsBarcode ITF14 expects 13 digits (recomputes check)
+  // EAN-13, EAN-8, UPC-A, UPC-E, ITF-14: validation now rejects inputs that
+  // include the check digit, so normalization is no longer needed — only the
+  // data-digit length reaches the renderer, which JsBarcode handles directly.
 };
 
-// Normalize input for JsBarcode: strip check digits so JsBarcode recalculates them
+// Normalize input for JsBarcode: handle UPC-E 7→8 digit conversion
 export function normalizeForRendering(text: string, format: BarcodeFormat): string {
+  // UPC-E: JsBarcode accepts 6 or 8 digits only. For 7-digit input (NS + 6 data),
+  // expand to UPC-A, compute check digit, and pass full 8 digits.
+  if (format === 'UPCE' && /^\d{7}$/.test(text)) {
+    const ns = text[0];
+    const middleSix = text.slice(1);
+    const upcA = expandUPCEtoUPCA(middleSix, ns); // 11 digits
+    const check = calculateUPCChecksum(upcA);
+    return text + String(check);
+  }
   const rule = NORMALIZE_REGISTRY[format];
   if (rule && rule[0].test(text)) return text.slice(0, rule[1]);
   return text;
@@ -714,20 +753,21 @@ const VALIDATION_REGISTRY: Partial<Record<BarcodeFormat, FormatValidator>> = {
     /^[A-Z0-9\-\.\s\$\/\+\%]+$/.test(text) ? null : { valid: false, message: 'CODE 39 only supports A-Z (uppercase), 0-9, -, ., $, /, +, %, and space' },
   EAN13: (text, _ct, opts) => {
     const d = digitsOnly('EAN-13')(text, _ct, opts); if (d) return d;
-    if (text.length !== 12 && text.length !== 13) return { valid: false, message: 'EAN-13 requires exactly 12 or 13 digits' };
-    if (text.length === 13 && opts.strictCheckDigit !== false) {
-      const expected = String(calculateEAN13Checksum(text.slice(0, 12)));
-      if (text[12] !== expected) return { valid: false, message: `EAN-13 check digit mismatch: expected ${expected}, got ${text[12]} (enter 12 digits to auto-compute)` };
+    // Relaxed mode (format analyzer): accept 12 or 13 digits for identification
+    if (opts.strictCheckDigit === false) {
+      if (text.length !== 12 && text.length !== 13) return { valid: false, message: 'Invalid barcode value! EAN-13 requires exactly 12 digits (check digit is auto-computed)' };
+      return null;
     }
+    if (text.length !== 12) return { valid: false, message: 'Invalid barcode value! EAN-13 requires exactly 12 digits (check digit is auto-computed)' };
     return null;
   },
   EAN8: (text, _ct, opts) => {
     const d = digitsOnly('EAN-8')(text, _ct, opts); if (d) return d;
-    if (text.length !== 7 && text.length !== 8) return { valid: false, message: 'EAN-8 requires exactly 7 or 8 digits' };
-    if (text.length === 8 && opts.strictCheckDigit !== false) {
-      const expected = String(calculateGS1Mod10(text.slice(0, 7)));
-      if (text[7] !== expected) return { valid: false, message: `EAN-8 check digit mismatch: expected ${expected}, got ${text[7]} (enter 7 digits to auto-compute)` };
+    if (opts.strictCheckDigit === false) {
+      if (text.length !== 7 && text.length !== 8) return { valid: false, message: 'Invalid barcode value! EAN-8 requires exactly 7 digits (check digit is auto-computed)' };
+      return null;
     }
+    if (text.length !== 7) return { valid: false, message: 'Invalid barcode value! EAN-8 requires exactly 7 digits (check digit is auto-computed)' };
     return null;
   },
   EAN5: (text) =>
@@ -736,35 +776,30 @@ const VALIDATION_REGISTRY: Partial<Record<BarcodeFormat, FormatValidator>> = {
     /^\d{2}$/.test(text) ? null : { valid: false, message: 'EAN-2 requires exactly 2 digits' },
   UPC: (text, _ct, opts) => {
     const d = digitsOnly('UPC-A')(text, _ct, opts); if (d) return d;
-    if (text.length !== 11 && text.length !== 12) return { valid: false, message: 'UPC-A requires exactly 11 or 12 digits' };
-    if (text.length === 12 && opts.strictCheckDigit !== false) {
-      const expected = String(calculateUPCChecksum(text.slice(0, 11)));
-      if (text[11] !== expected) return { valid: false, message: `UPC-A check digit mismatch: expected ${expected}, got ${text[11]} (enter 11 digits to auto-compute)` };
+    if (opts.strictCheckDigit === false) {
+      if (text.length !== 11 && text.length !== 12) return { valid: false, message: 'Invalid barcode value! UPC-A requires exactly 11 digits (check digit is auto-computed)' };
+      return null;
     }
+    if (text.length !== 11) return { valid: false, message: 'Invalid barcode value! UPC-A requires exactly 11 digits (check digit is auto-computed)' };
     return null;
   },
   UPCE: (text, _ct, opts) => {
     const d = digitsOnly('UPC-E')(text, _ct, opts); if (d) return d;
-    if (text.length === 6) return null;
-    if (text.length === 8) {
-      if (opts.strictCheckDigit === false) return null;
-      if (text[0] !== '0' && text[0] !== '1') return { valid: false, message: 'UPC-E 8-digit input must start with number system 0 or 1' };
-      const upcA = expandUPCEtoUPCA(text.slice(1, 7), text[0]);
-      const expected = String(calculateUPCChecksum(upcA.slice(0, 11)));
-      if (text[7] !== expected) return { valid: false, message: `UPC-E check digit mismatch: expected ${expected}, got ${text[7]} (enter 6 digits to auto-compute)` };
+    if (opts.strictCheckDigit === false) {
+      if (text.length !== 7 && text.length !== 6 && text.length !== 8) return { valid: false, message: 'Invalid barcode value! UPC-E requires exactly 7 digits (number system + 6 data digits; check digit is auto-computed)' };
       return null;
     }
-    // 7 chars is ambiguous per UPC-E spec — the 7th digit could be a number-system
-    // prefix or a check suffix. Reject explicitly rather than crashing the renderer.
-    return { valid: false, message: 'UPC-E requires 6 digits (auto-computed check) or 8 digits (number system + 6 + check). 7 digits is ambiguous.' };
+    if (text.length !== 7) return { valid: false, message: 'Invalid barcode value! UPC-E requires exactly 7 digits (number system + 6 data digits; check digit is auto-computed)' };
+    if (text[0] !== '0' && text[0] !== '1') return { valid: false, message: 'UPC-E must start with number system 0 or 1' };
+    return null;
   },
   ITF14: (text, _ct, opts) => {
     const d = digitsOnly('ITF-14')(text, _ct, opts); if (d) return d;
-    if (text.length !== 13 && text.length !== 14) return { valid: false, message: 'ITF-14 requires exactly 13 or 14 digits' };
-    if (text.length === 14 && opts.strictCheckDigit !== false) {
-      const expected = String(calculateGS1Mod10(text.slice(0, 13)));
-      if (text[13] !== expected) return { valid: false, message: `ITF-14 check digit mismatch: expected ${expected}, got ${text[13]} (enter 13 digits to auto-compute)` };
+    if (opts.strictCheckDigit === false) {
+      if (text.length !== 13 && text.length !== 14) return { valid: false, message: 'Invalid barcode value! ITF-14 requires exactly 13 digits (check digit is auto-computed)' };
+      return null;
     }
+    if (text.length !== 13) return { valid: false, message: 'Invalid barcode value! ITF-14 requires exactly 13 digits (check digit is auto-computed)' };
     return null;
   },
   ITF: (text, checksumType) => {
@@ -836,6 +871,21 @@ export function validateInput(
  *   5 mil   @ 300 DPI → 1.5 px  → rounds to 2 px → actual 6.67 mil (0.169 mm)
  *  10 mil   @ 300 DPI → 3.0 px  → exact   3 px   → actual 10 mil   (0.254 mm)
  */
+/**
+ * Reference DPI used to interpret pixel-valued config fields (height, margin,
+ * fontSize) as a physical size. These fields define dimensions in "logical
+ * pixels at BASE_DPI"; render code multiplies by `dpi / BASE_DPI` to produce
+ * the actual pixel count at the configured DPI. This keeps the printed /
+ * exported physical size stable when DPI changes — DPI becomes a pure
+ * quality knob (more pixels per mm) instead of also changing physical size.
+ */
+export const BASE_DPI = 300;
+
+/** Convert a "logical px at BASE_DPI" value to actual render pixels at `dpi`. */
+export function physicalPxScale(dpi: number): number {
+  return dpi / BASE_DPI;
+}
+
 export function snapToPixelGrid(widthMils: number, dpi: number): {
   modulePixels: number;
   actualMils: number;
@@ -850,13 +900,14 @@ export function snapToPixelGrid(widthMils: number, dpi: number): {
 }
 
 export function getDefaultConfig(): BarcodeConfig {
-  // Default: 2 px module at 300 DPI = 6.67 mil (0.169 mm).
-  // 7.5 mil is NOT achievable at 300 DPI (7.5 × 300/1000 = 2.25 → rounds to 2 px).
-  const { actualMils } = snapToPixelGrid(7.5, 300);
+  // widthMils is the user's requested X-dim (intent). It's not pre-snapped —
+  // snapToPixelGrid is applied non-destructively at render time so changing
+  // DPI re-evaluates the actual pixel size cleanly. 7.5 mil is the GS1
+  // healthcare minimum X-dimension.
   return {
     format: 'CODE39',
     text: 'BARCODE123',
-    widthMils: +actualMils.toFixed(2),
+    widthMils: 7.5,
     dpi: 300,
     height: 100,
     displayValue: true,
