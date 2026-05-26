@@ -52,7 +52,7 @@ export default defineConfig({
   },
   // CRITICAL: This ensures all file paths in index.html are relative (./)
   // so Electron can load them from the local folder.
-  base: './', 
+  base: '/barcodegeneratorapp/', 
   build: {
     outDir: 'dist',
     emptyOutDir: true, // Cleans the folder before building
