@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { BarcodeFormat, BARCODE_FORMATS, ChecksumType, getApplicableChecksums, applyChecksum, snapToPixelGrid, getDefaultConfig, is2DBarcode, validateInput } from '@/lib/barcodeUtils';
+import { BarcodeFormat, BARCODE_FORMATS, ChecksumType, getApplicableChecksums, applyChecksum, snapToPixelGrid, getDefaultConfig, is2DBarcode, validateInput, getDisplayValue, getFixedLength, BASE_DPI } from '@/lib/barcodeUtils';
 import { generateBarcodeImage, generateBarcodeBlob, generateBarcodeSVGBlob, BarcodeImageResult } from '@/lib/barcodeImageGenerator';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -61,14 +61,12 @@ function generateRandomString(length: number, numeric: boolean): string {
 }
 
 function generateRandomForFormat(format: BarcodeFormat, count: number, stringLength: number): string[] {
-  const isNumericOnly = ['EAN13', 'EAN8', 'UPC', 'UPCE', 'ITF14', 'ITF', 'MSI', 'MSI10', 'MSI11', 'pharmacode', 'codabar'].includes(format);
+  const isNumericOnly = ['EAN13', 'EAN8', 'EAN5', 'EAN2', 'UPC', 'UPCE', 'ITF14', 'ITF', 'MSI', 'MSI10', 'MSI11', 'pharmacode', 'codabar'].includes(format);
 
-  let length = stringLength;
-  if (format === 'EAN13') length = 12;
-  if (format === 'EAN8') length = 7;
-  if (format === 'UPC') length = 11;
-  if (format === 'UPCE') length = 7;
-  if (format === 'ITF14') length = 13;
+  // Honour fixed-length formats — getFixedLength is the single source of truth
+  // so EAN-5/EAN-2/etc. don't fall through to the user-driven stringLength.
+  const fixed = getFixedLength(format);
+  let length = fixed ?? stringLength;
   if (format === 'ITF' && length % 2 !== 0) length = Math.max(2, length - 1);
 
   if (format === 'pharmacode') {
@@ -139,6 +137,14 @@ export function BatchGenerator({ onImagesGenerated, onActionsReady }: BatchGener
 
   useEffect(() => { setChecksumType('none'); }, [format]);
 
+  // Auto-set String Length to the format's required length when the user
+  // picks a fixed-length symbology (EAN-13 → 12, EAN-8 → 7, etc.). For
+  // variable-length formats the existing user value is preserved.
+  useEffect(() => {
+    const fixed = getFixedLength(format);
+    if (fixed !== null) setStringLength(fixed);
+  }, [format]);
+
   // Notify parent whenever committed batches change
   useEffect(() => {
     const allImages = batches.flatMap(b => b.images);
@@ -189,10 +195,15 @@ export function BatchGenerator({ onImagesGenerated, onActionsReady }: BatchGener
             if (cancelled) return;
             const chunk = batch.values.slice(i, i + REGEN_CHUNK_SIZE);
             const chunkResults = await Promise.all(
-              chunk.map((val) => {
+              chunk.map(async (val) => {
                 if (!validateInput(val, batch.format, batch.checksumType).valid) return null;
                 const processedVal = applyChecksum(val, batch.format, batch.checksumType);
-                return generateBarcodeImage(processedVal, batch.format, scale, margin, widthMils, dpi, height);
+                const result = await generateBarcodeImage(processedVal, batch.format, scale, margin, widthMils, dpi, height);
+                if (!result) return null;
+                // Override the result's `value` with the full display-form so
+                // batch previews/PDF labels match what JsBarcode actually
+                // encodes (e.g. EAN-13 12-digit input → 13-digit label).
+                return { ...result, value: getDisplayValue(val, batch.format, batch.checksumType) };
               }),
             );
             for (const result of chunkResults) {
@@ -256,6 +267,11 @@ export function BatchGenerator({ onImagesGenerated, onActionsReady }: BatchGener
         if (result) {
           images.push({
             ...result,
+            // Show the full encoded value (including intrinsic check digits
+            // JsBarcode appends automatically — EAN/UPC/ITF-14) so the batch
+            // label matches the bars and matches the Generate screen's
+            // displayValue rendering.
+            value: getDisplayValue(val, format, checksumType),
             formatLabel: fmtLabel,
             checksumLabel: chkLabel,
           });
@@ -329,14 +345,18 @@ export function BatchGenerator({ onImagesGenerated, onActionsReady }: BatchGener
         for (const val of batch.values) {
           if (!validateInput(val, batch.format, batch.checksumType).valid) continue;
           const processedVal = applyChecksum(val, batch.format, batch.checksumType);
+          // File name uses the full display value (incl. intrinsic check digit)
+          // so an EAN-13 input "123456789012" is saved as "1234567890128.svg",
+          // matching the bars and the on-screen preview label.
+          const fileName = getDisplayValue(val, batch.format, batch.checksumType);
           // 1D barcodes: export as SVG (vector, physical mm dimensions embedded).
           // 2D barcodes: export as PNG (bwip-js renders to canvas, no SVG output).
           if (!is2DBarcode(batch.format)) {
             const svgBlob = generateBarcodeSVGBlob(processedVal, batch.format, widthMils, dpi, height, 0);
-            if (svgBlob) folder.file(`${val}.svg`, svgBlob);
+            if (svgBlob) folder.file(`${fileName}.svg`, svgBlob);
           } else {
             const blob = await generateBarcodeBlob(processedVal, batch.format, scale, 0, widthMils, dpi, height);
-            if (blob) folder.file(`${val}.png`, blob);
+            if (blob) folder.file(`${fileName}.png`, blob);
           }
           processed++;
           setProgress((processed / totalItems) * 100);
@@ -383,7 +403,10 @@ export function BatchGenerator({ onImagesGenerated, onActionsReady }: BatchGener
           if (!validateInput(val, batch.format, batch.checksumType).valid) continue;
           const processedVal = applyChecksum(val, batch.format, batch.checksumType);
           const result = await generateBarcodeImage(processedVal, batch.format, scale, 0, widthMils, dpi, height);
-          if (result) pdfImages.push({ ...result, label });
+          if (result) {
+            const fullValue = getDisplayValue(val, batch.format, batch.checksumType);
+            pdfImages.push({ ...result, value: fullValue, label });
+          }
           processed++;
           setProgress((processed / totalItems) * 100);
         }
@@ -691,6 +714,22 @@ export function BatchGenerator({ onImagesGenerated, onActionsReady }: BatchGener
           />
           <p className="text-xs text-muted-foreground text-center">Custom: {scale}x</p>
         </div>
+      </div>
+
+      {/* Barcode Height */}
+      <div className="space-y-3">
+        <div className="flex justify-between text-sm">
+          <Label className="text-muted-foreground">Barcode Height</Label>
+          <span className="font-mono text-muted-foreground font-medium">{(height * 25.4 / BASE_DPI).toFixed(1)}mm</span>
+        </div>
+        <Slider
+          value={[height]}
+          onValueChange={([v]) => setHeight(v)}
+          min={30}
+          max={200}
+          step={5}
+          className="w-full"
+        />
       </div>
 
       {/* Progress */}

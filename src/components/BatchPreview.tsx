@@ -1,23 +1,15 @@
 import { BarcodeImageResult } from '@/lib/barcodeImageGenerator';
 import { injectPngDpi } from '@/lib/barcodeImageGenerator';
 import { Button } from '@/components/ui/button';
-import { Printer, Layers, FileArchive, FileText, Download, ChevronDown } from 'lucide-react';
+import { Printer, Layers, FileArchive, FileText, Download } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
-import { PRINT_FORMATS, PrintFormatId, PrintFormat } from '@/lib/printFormats';
+import { PrintFormat } from '@/lib/printFormats';
 import { PrintConfigDialog } from '@/components/PrintConfigDialog';
 import { useState } from 'react';
 import { toast } from 'sonner';
 
 interface BatchPreviewProps {
   images: BarcodeImageResult[];
-  onPrint: (format: PrintFormatId) => void;
   onCustomPrint?: (format: PrintFormat) => void;
   onDownloadZip?: () => void;
   onExportPDF?: () => void;
@@ -26,7 +18,7 @@ interface BatchPreviewProps {
   dpi?: number;
 }
 
-export function BatchPreview({ images, onPrint, onCustomPrint, onDownloadZip, onExportPDF, isGenerating, actionsDisabled, dpi = 300 }: BatchPreviewProps) {
+export function BatchPreview({ images, onCustomPrint, onDownloadZip, onExportPDF, isGenerating, actionsDisabled, dpi = 300 }: BatchPreviewProps) {
   const btnDisabled = isGenerating || actionsDisabled;
   const [customPrintOpen, setCustomPrintOpen] = useState(false);
 
@@ -196,36 +188,15 @@ export function BatchPreview({ images, onPrint, onCustomPrint, onDownloadZip, on
               <FileText className="h-4 w-4" />
               PDF
             </Button>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  size="sm"
-                  disabled={isGenerating}
-                  className="gap-2 rounded-xl h-10 px-4 download-btn text-white font-medium"
-                >
-                  <Printer className="h-4 w-4" />
-                  Print
-                  <ChevronDown className="h-3 w-3 ml-0.5 opacity-70" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-56">
-                {PRINT_FORMATS.map((f) => (
-                  <DropdownMenuItem key={f.id} onClick={() => onPrint(f.id)}>
-                    <div className="flex flex-col">
-                      <span className="font-medium">{f.label}</span>
-                      <span className="text-xs text-muted-foreground">{f.description}</span>
-                    </div>
-                  </DropdownMenuItem>
-                ))}
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => setCustomPrintOpen(true)}>
-                  <div className="flex flex-col">
-                    <span className="font-medium">Custom Print…</span>
-                    <span className="text-xs text-muted-foreground">Configure custom label size & offsets</span>
-                  </div>
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <Button
+              size="sm"
+              onClick={() => setCustomPrintOpen(true)}
+              disabled={isGenerating}
+              className="gap-2 rounded-xl h-10 px-4 download-btn text-white font-medium"
+            >
+              <Printer className="h-4 w-4" />
+              Print
+            </Button>
             <PrintConfigDialog
               open={customPrintOpen}
               onOpenChange={setCustomPrintOpen}

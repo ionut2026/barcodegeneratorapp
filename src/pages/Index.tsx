@@ -12,7 +12,7 @@ import { BarcodeImageResult } from '@/lib/barcodeImageGenerator';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Settings2, Calculator, Sparkles, Layers } from 'lucide-react';
 import { toast } from 'sonner';
-import { PrintFormatId, PrintFormat, PRINT_FORMAT_REGISTRY, checkBarcodeFit, generatePrintPdf } from '@/lib/printFormats';
+import { PrintFormat, checkBarcodeFit, generatePrintPdf } from '@/lib/printFormats';
 
 const Index = () => {
   const [config, setConfig] = useState<BarcodeConfig>(getDefaultConfig());
@@ -44,40 +44,6 @@ const Index = () => {
     setChecksumInput(input);
     setChecksumVariants(checksums);
   }, []);
-
-  const handleBatchPrint = useCallback(async (formatId: PrintFormatId) => {
-    if (batchImages.length === 0) return;
-
-    const printFormat = PRINT_FORMAT_REGISTRY[formatId];
-
-    // Overflow check for label formats
-    if (formatId !== 'a4-page' && batchImages[0]?.widthMm > 0) {
-      const firstImg = batchImages[0];
-      const fit = checkBarcodeFit(firstImg.width, firstImg.height, config.dpi, printFormat);
-      if (!fit.fits) {
-        toast.warning(
-          `Barcode (${fit.barcodeWidthMm.toFixed(1)} \u00d7 ${fit.barcodeHeightMm.toFixed(1)} mm) exceeds ${printFormat.label} printable area (${fit.printableWidthMm.toFixed(1)} \u00d7 ${fit.printableHeightMm.toFixed(1)} mm). Reduce bar width or bar height to fit.`
-        );
-        return;
-      }
-    }
-
-    try {
-      await generatePrintPdf(
-        batchImages.map(img => ({
-          dataUrl: img.dataUrl,
-          widthPx: img.width,
-          heightPx: img.height,
-          dpi: config.dpi,
-          label: img.value,
-        })),
-        printFormat,
-      );
-    } catch (error) {
-      console.error('Batch print error:', error);
-      toast.error('Failed to generate print PDF');
-    }
-  }, [batchImages, config.dpi]);
 
   const handleBatchCustomPrint = useCallback(async (printFormat: PrintFormat) => {
     if (batchImages.length === 0) return;
@@ -191,7 +157,6 @@ const Index = () => {
             {activeTab === 'batch' ? (
               <BatchPreview
                 images={batchImages}
-                onPrint={handleBatchPrint}
                 onCustomPrint={handleBatchCustomPrint}
                 onDownloadZip={() => batchActions?.downloadAsZip()}
                 onExportPDF={() => batchActions?.exportAsPDF()}

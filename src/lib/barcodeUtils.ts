@@ -183,13 +183,76 @@ export function applyChecksum(text: string, format: BarcodeFormat, checksumType:
   return applier ? applier(text, format) : text;
 }
 
+// ── Intrinsic checksum (JsBarcode-implicit) ───────────────────────────────────
+// For formats whose check digit is computed automatically by JsBarcode (EAN-13,
+// EAN-8, UPC-A, UPC-E, ITF-14), the user is not asked to choose a checksum —
+// `applyChecksum` returns the value unchanged. This helper appends the same
+// check digit JsBarcode will compute so callers (notably the batch screen) can
+// display the full encoded value as a text label / file name. The bar
+// encoding itself is unaffected: JsBarcode receives the 12-digit value and
+// computes the 13th digit internally; this helper just reproduces that digit
+// for display purposes so the label matches the bars.
+export function applyIntrinsicChecksum(text: string, format: BarcodeFormat): string {
+  if (!text) return text;
+  if (!/^\d+$/.test(text)) return text;
+  switch (format) {
+    case 'EAN13':
+      return text.length === 12 ? text + calculateEAN13Checksum(text) : text;
+    case 'EAN8':
+      // EAN-8 uses the same GS1 Mod 10 algorithm (weights 3,1 from right) —
+      // calculateGS1Mod10 is length-agnostic and produces the canonical EAN-8
+      // check digit when given the 7 data digits.
+      return text.length === 7 ? text + calculateGS1Mod10(text) : text;
+    case 'UPC':
+      return text.length === 11 ? text + calculateUPCChecksum(text) : text;
+    case 'UPCE': {
+      // UPC-E displayed value is the 8-digit form (NS + 6 data + check). The
+      // check is computed from the UPC-A expansion — same logic as the
+      // renderer path in normalizeForRendering().
+      if (text.length !== 7) return text;
+      const ns = text[0];
+      const middleSix = text.slice(1);
+      const upcA = expandUPCEtoUPCA(middleSix, ns);
+      return text + String(calculateUPCChecksum(upcA));
+    }
+    case 'ITF14':
+      return text.length === 13 ? text + calculateGS1Mod10(text) : text;
+    default:
+      return text;
+  }
+}
+
+// Compose user-selected and intrinsic check digits — convenience for callers
+// (e.g., batch mode) that want the value as it would appear printed under the
+// barcode. Equivalent to applyIntrinsicChecksum(applyChecksum(...)).
+export function getDisplayValue(text: string, format: BarcodeFormat, checksumType: ChecksumType): string {
+  return applyIntrinsicChecksum(applyChecksum(text, format, checksumType), format);
+}
+
+// Fixed-length formats whose input must be exactly N characters. Returns the
+// required length, or null when the format accepts variable-length input.
+// Used by the batch screen to auto-update the "String Length" hint when the
+// user picks a fixed-length symbology.
+export function getFixedLength(format: BarcodeFormat): number | null {
+  switch (format) {
+    case 'EAN13': return 12;
+    case 'EAN8':  return 7;
+    case 'UPC':   return 11;
+    case 'UPCE':  return 7;
+    case 'ITF14': return 13;
+    case 'EAN5':  return 5;
+    case 'EAN2':  return 2;
+    default:      return null;
+  }
+}
+
 export const BARCODE_FORMATS: { value: BarcodeFormat; label: string; description: string; validChars: string; lengthHint: string; category: '1D' | '2D' }[] = [
   // 1D Barcodes
   {
     value: 'codabar',
     label: 'Codabar',
     description: 'Libraries, blood banks, shipping',
-    validChars: '0-9, -, $, :, /, ., +',
+    validChars: '0-9, -, $, :, /, ., + (numeric & symbols)',
     lengthHint: 'Any length',
     category: '1D'
   },
@@ -197,7 +260,7 @@ export const BARCODE_FORMATS: { value: BarcodeFormat; label: string; description
     value: 'CODE39',
     label: 'CODE 39',
     description: 'Alphanumeric, widely used in industrial applications',
-    validChars: 'A-Z, 0-9, -, ., $, /, +, %, SPACE',
+    validChars: 'A-Z, 0-9, -, ., $, /, +, %, space',
     lengthHint: 'Any length',
     category: '1D'
   },
@@ -696,6 +759,16 @@ const NORMALIZE_REGISTRY: Partial<Record<BarcodeFormat, [RegExp, number]>> = {
 
 // Normalize input for JsBarcode: handle UPC-E 7→8 digit conversion
 export function normalizeForRendering(text: string, format: BarcodeFormat): string {
+  // Codabar: JsBarcode requires start/stop characters (A-D). If the user input
+  // doesn't already have them, wrap with 'A' ... 'A' automatically.
+  if (format === 'codabar') {
+    const hasStart = /^[A-Da-d]/.test(text);
+    const hasStop = /[A-Da-d]$/.test(text);
+    if (!hasStart && !hasStop) return 'A' + text + 'A';
+    if (!hasStart) return 'A' + text;
+    if (!hasStop) return text + 'A';
+    return text;
+  }
   // UPC-E: JsBarcode accepts 6 or 8 digits only. For 7-digit input (NS + 6 data),
   // expand to UPC-A, compute check digit, and pass full 8 digits.
   if (format === 'UPCE' && /^\d{7}$/.test(text)) {
@@ -770,10 +843,16 @@ const VALIDATION_REGISTRY: Partial<Record<BarcodeFormat, FormatValidator>> = {
     if (text.length !== 7) return { valid: false, message: 'Invalid barcode value! EAN-8 requires exactly 7 digits (check digit is auto-computed)' };
     return null;
   },
-  EAN5: (text) =>
-    /^\d{5}$/.test(text) ? null : { valid: false, message: 'EAN-5 requires exactly 5 digits' },
-  EAN2: (text) =>
-    /^\d{2}$/.test(text) ? null : { valid: false, message: 'EAN-2 requires exactly 2 digits' },
+  EAN5: (text) => {
+    if (/[^0-9]/.test(text)) return { valid: false, message: 'EAN-5 only supports digits (0-9). Remove any non-numeric characters.' };
+    if (text.length !== 5) return { valid: false, message: 'EAN-5 requires exactly 5 digits (currently ' + text.length + ')' };
+    return null;
+  },
+  EAN2: (text) => {
+    if (/[^0-9]/.test(text)) return { valid: false, message: 'EAN-2 only supports digits (0-9). Remove any non-numeric characters.' };
+    if (text.length !== 2) return { valid: false, message: 'EAN-2 requires exactly 2 digits (currently ' + text.length + ')' };
+    return null;
+  },
   UPC: (text, _ct, opts) => {
     const d = digitsOnly('UPC-A')(text, _ct, opts); if (d) return d;
     if (opts.strictCheckDigit === false) {
@@ -825,8 +904,8 @@ const VALIDATION_REGISTRY: Partial<Record<BarcodeFormat, FormatValidator>> = {
   MSI1010: (text, ct, opts) => digitsOnly('MSI formats')(text, ct, opts),
   MSI1110: (text, ct, opts) => digitsOnly('MSI formats')(text, ct, opts),
   codabar: (text, checksumType) => {
-    if (!/^[A-Da-d]?[0-9\-\$\:\/\.\+]+[A-Da-d]?$/.test(text)) {
-      return { valid: false, message: 'Codabar only supports digits (0-9), -, $, :, /, ., + and optional A-D start/stop characters' };
+    if (!/^[0-9\-\$\:\/\.\+]+$/.test(text)) {
+      return { valid: false, message: 'Codabar only supports digits (0-9) and symbols: -, $, :, /, ., +' };
     }
     // Spec-driven checksum constraints — without these, the applier silently
     // returns the text with no check digit and the user thinks the option is broken.

@@ -102,7 +102,9 @@ export function BarcodeControls({ config, onChange, isValid, errorMessage }: Bar
                           ? 'Any valid text input accepted' 
                           : selectedFormat.validChars.includes('0-9 only') 
                             ? 'Numeric input only, auto-validated'
-                            : 'Alphanumeric, special chars validated'}
+                            : selectedFormat.validChars.includes('numeric & symbols')
+                              ? 'Numeric and symbols, auto-validated'
+                              : 'Alphanumeric, special chars validated'}
                       </span>
                     </div>
                   </div>

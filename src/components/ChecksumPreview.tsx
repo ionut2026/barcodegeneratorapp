@@ -1,15 +1,10 @@
-import { useEffect, useRef, useMemo, useCallback } from 'react';
+import { useEffect, useRef, useMemo, useCallback, useState } from 'react';
 import JsBarcode from 'jsbarcode';
-import { AlertCircle, Calculator, Printer, ChevronDown } from 'lucide-react';
+import { AlertCircle, Calculator, Printer } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
-import { PRINT_FORMATS, PrintFormatId, PRINT_FORMAT_REGISTRY, checkBarcodeFit, generatePrintPdf } from '@/lib/printFormats';
+import { PrintFormat, checkBarcodeFit, generatePrintPdf } from '@/lib/printFormats';
+import { PrintConfigDialog } from '@/components/PrintConfigDialog';
 import { physicalPxScale } from '@/lib/barcodeUtils';
 import { toast } from 'sonner';
 
@@ -63,6 +58,7 @@ function ChecksumBarcodeCard({ name, value, barWidth }: { name: string; value: s
 }
 
 export function ChecksumPreview({ variants, inputValue, widthMils = 7.5, dpi = 300 }: ChecksumPreviewProps) {
+  const [customPrintOpen, setCustomPrintOpen] = useState(false);
   const applicable = useMemo(
     () => variants.filter(v => v.applicable && v.fullValue !== '-'),
     [variants]
@@ -71,11 +67,10 @@ export function ChecksumPreview({ variants, inputValue, widthMils = 7.5, dpi = 3
   // Compute bar width from physical config — same formula as the Generate screen
   const modulePixels = Math.max(1, Math.round(widthMils * dpi / 1000));
 
-  const printChecksums = useCallback(async (formatId: PrintFormatId) => {
+  const printChecksums = useCallback(async (printFormat: PrintFormat) => {
     if (applicable.length === 0) return;
 
-    const printFormat = PRINT_FORMAT_REGISTRY[formatId];
-    const isLabelFormat = formatId !== 'a4-page';
+    const isLabelFormat = printFormat.id !== 'a4-page';
 
     // Rasterize each barcode SVG to a PNG data URL via a temporary canvas
     const rasterizeSvg = (svgEl: SVGSVGElement): Promise<{ dataUrl: string; widthPx: number; heightPx: number }> => {
@@ -196,28 +191,21 @@ export function ChecksumPreview({ variants, inputValue, widthMils = 7.5, dpi = 3
         <div className="flex items-center gap-3">
           <span className="text-xs font-mono text-muted-foreground">{applicable.length} variants</span>
           {applicable.length > 0 && (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  size="sm"
-                  className="gap-2 rounded-xl h-10 px-4 download-btn text-white font-medium"
-                >
-                  <Printer className="h-4 w-4" />
-                  Print
-                  <ChevronDown className="h-3 w-3 ml-0.5 opacity-70" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-56">
-                {PRINT_FORMATS.map((f) => (
-                  <DropdownMenuItem key={f.id} onClick={() => printChecksums(f.id)}>
-                    <div className="flex flex-col">
-                      <span className="font-medium">{f.label}</span>
-                      <span className="text-xs text-muted-foreground">{f.description}</span>
-                    </div>
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <>
+              <Button
+                size="sm"
+                onClick={() => setCustomPrintOpen(true)}
+                className="gap-2 rounded-xl h-10 px-4 download-btn text-white font-medium"
+              >
+                <Printer className="h-4 w-4" />
+                Print
+              </Button>
+              <PrintConfigDialog
+                open={customPrintOpen}
+                onOpenChange={setCustomPrintOpen}
+                onPrint={printChecksums}
+              />
+            </>
           )}
         </div>
       </div>

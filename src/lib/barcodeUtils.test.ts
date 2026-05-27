@@ -18,6 +18,9 @@ import {
   validateInput,
   normalizeForRendering,
   applyChecksum,
+  applyIntrinsicChecksum,
+  getDisplayValue,
+  getFixedLength,
   is2DBarcode,
   getDefaultConfig,
   getApplicableChecksums,
@@ -741,10 +744,10 @@ describe('validateInput additional formats', () => {
   it('EAN2: rejects 3 digits', () => expect(validateInput('123', 'EAN2').valid).toBe(false));
   it('MSI10: accepts digits', () => expect(validateInput('12345', 'MSI10').valid).toBe(true));
   it('MSI1010: rejects alpha', () => expect(validateInput('ABC', 'MSI1010').valid).toBe(false));
-  it('codabar: accepts valid chars', () => expect(validateInput('A12345B', 'codabar').valid).toBe(true));
+  it('codabar: accepts digits and symbols', () => expect(validateInput('12345', 'codabar').valid).toBe(true));
   it('codabar: accepts digits only', () => expect(validateInput('1234', 'codabar').valid).toBe(true));
   it('codabar: accepts special chars "12-34$5.6:7/8+9"', () => expect(validateInput('12-34$5.6:7/8+9', 'codabar').valid).toBe(true));
-  it('codabar: accepts lowercase start/stop "a1234b"', () => expect(validateInput('a1234b', 'codabar').valid).toBe(true));
+  it('codabar: rejects start/stop characters "A1234B"', () => expect(validateInput('A1234B', 'codabar').valid).toBe(false));
   it('codabar: rejects invalid characters "@#!"', () => expect(validateInput('@#!', 'codabar').valid).toBe(false));
   it('codabar: rejects letters other than A-D "HELLO"', () => expect(validateInput('HELLO', 'codabar').valid).toBe(false));
   it('pharmacode: rejects non-purely-numeric "3abc"', () => expect(validateInput('3abc', 'pharmacode').valid).toBe(false));
@@ -1038,5 +1041,107 @@ describe('validateInput — Codabar checksum-context rules', () => {
   it('codabar + mod11A accepts inputs whose check is a valid digit', () => {
     // "12345" → check = 5
     expect(validateInput('12345', 'codabar', 'mod11A').valid).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// applyIntrinsicChecksum / getDisplayValue / getFixedLength
+// ---------------------------------------------------------------------------
+
+describe('applyIntrinsicChecksum', () => {
+  it('EAN-13 12 digits → appends correct check digit (user example: 123456789012 → 1234567890128)', () => {
+    expect(applyIntrinsicChecksum('123456789012', 'EAN13')).toBe('1234567890128');
+  });
+  it('EAN-13 with known GS1 example 590123412345 → 5901234123457', () => {
+    expect(applyIntrinsicChecksum('590123412345', 'EAN13')).toBe('5901234123457');
+  });
+  it('EAN-13 13 digits → unchanged (already has check)', () => {
+    expect(applyIntrinsicChecksum('1234567890128', 'EAN13')).toBe('1234567890128');
+  });
+  it('EAN-13 non-numeric → unchanged', () => {
+    expect(applyIntrinsicChecksum('12345678901a', 'EAN13')).toBe('12345678901a');
+  });
+  it('EAN-8 7 digits → appends Mod10 check digit', () => {
+    // 1234567 → weights from right (3,1,3,1,3,1,3): 7*3+6+5*3+4+3*3+2+1*3 = 21+6+15+4+9+2+3 = 60 → check=(10-60%10)%10=0
+    expect(applyIntrinsicChecksum('1234567', 'EAN8')).toBe('12345670');
+  });
+  it('UPC-A 11 digits → appends check digit', () => {
+    expect(applyIntrinsicChecksum('03600029145', 'UPC')).toBe('036000291452');
+  });
+  it('UPC-E 7 digits → appends check digit derived from UPC-A expansion', () => {
+    // "0123456" → 0 + middleSix=123456 + check (lastE=6 → expansion XXXXX00006)
+    // upcA = 0 + 1234500006 → 11 digits; check = calculateUPCChecksum(upcA)
+    const result = applyIntrinsicChecksum('0123456', 'UPCE');
+    expect(result).toHaveLength(8);
+    expect(result.startsWith('0123456')).toBe(true);
+  });
+  it('UPC-E with wrong length → unchanged', () => {
+    expect(applyIntrinsicChecksum('012345', 'UPCE')).toBe('012345');
+  });
+  it('ITF-14 13 digits → appends GS1 Mod10 check digit', () => {
+    // "1234567891234" → GS1 Mod10 check
+    const result = applyIntrinsicChecksum('1234567891234', 'ITF14');
+    expect(result).toHaveLength(14);
+    expect(result.startsWith('1234567891234')).toBe(true);
+  });
+  it('CODE39 → unchanged (no intrinsic check)', () => {
+    expect(applyIntrinsicChecksum('HELLO', 'CODE39')).toBe('HELLO');
+  });
+  it('CODE128 → unchanged (intrinsic check is non-visible mod 103)', () => {
+    expect(applyIntrinsicChecksum('HELLO', 'CODE128')).toBe('HELLO');
+  });
+  it('codabar → unchanged', () => {
+    expect(applyIntrinsicChecksum('12345', 'codabar')).toBe('12345');
+  });
+  it('EAN-5/EAN-2 → unchanged (no intrinsic check digit)', () => {
+    expect(applyIntrinsicChecksum('12345', 'EAN5')).toBe('12345');
+    expect(applyIntrinsicChecksum('12', 'EAN2')).toBe('12');
+  });
+  it('empty string → unchanged', () => {
+    expect(applyIntrinsicChecksum('', 'EAN13')).toBe('');
+  });
+});
+
+describe('getDisplayValue', () => {
+  it('EAN-13 with checksumType=none → appends intrinsic check digit', () => {
+    expect(getDisplayValue('123456789012', 'EAN13', 'none')).toBe('1234567890128');
+  });
+  it('CODE39 + mod43 → appends mod43 check character (user checksum still works)', () => {
+    expect(getDisplayValue('HELLO', 'CODE39', 'mod43')).toBe('HELLOB');
+  });
+  it('CODE39 + none → unchanged', () => {
+    expect(getDisplayValue('HELLO', 'CODE39', 'none')).toBe('HELLO');
+  });
+  it('ITF-14 with checksumType=none → appends intrinsic check', () => {
+    const result = getDisplayValue('1234567891234', 'ITF14', 'none');
+    expect(result).toHaveLength(14);
+  });
+  it('codabar + mod16 → appends user-selected check (no intrinsic)', () => {
+    // "1234" → mod16 check = '6' (per existing tests)
+    expect(getDisplayValue('1234', 'codabar', 'mod16')).toBe('12346');
+  });
+});
+
+describe('getFixedLength', () => {
+  it('EAN-13 → 12', () => { expect(getFixedLength('EAN13')).toBe(12); });
+  it('EAN-8  → 7',  () => { expect(getFixedLength('EAN8')).toBe(7); });
+  it('UPC-A  → 11', () => { expect(getFixedLength('UPC')).toBe(11); });
+  it('UPC-E  → 7',  () => { expect(getFixedLength('UPCE')).toBe(7); });
+  it('ITF-14 → 13', () => { expect(getFixedLength('ITF14')).toBe(13); });
+  it('EAN-5  → 5',  () => { expect(getFixedLength('EAN5')).toBe(5); });
+  it('EAN-2  → 2',  () => { expect(getFixedLength('EAN2')).toBe(2); });
+  it('CODE39, CODE128, codabar, ITF, MSI* → null (variable length)', () => {
+    expect(getFixedLength('CODE39')).toBeNull();
+    expect(getFixedLength('CODE128')).toBeNull();
+    expect(getFixedLength('codabar')).toBeNull();
+    expect(getFixedLength('ITF')).toBeNull();
+    expect(getFixedLength('MSI')).toBeNull();
+    expect(getFixedLength('MSI10')).toBeNull();
+  });
+  it('2D formats (qrcode, azteccode, datamatrix, pdf417) → null', () => {
+    expect(getFixedLength('qrcode')).toBeNull();
+    expect(getFixedLength('azteccode')).toBeNull();
+    expect(getFixedLength('datamatrix')).toBeNull();
+    expect(getFixedLength('pdf417')).toBeNull();
   });
 });

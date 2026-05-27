@@ -11,7 +11,7 @@ import { BarcodeExportActions } from '@/components/BarcodeExportActions';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
-import { PrintFormatId, PrintFormat, PRINT_FORMAT_REGISTRY, checkBarcodeFit, generatePrintPdf } from '@/lib/printFormats';
+import { PrintFormat, checkBarcodeFit, generatePrintPdf } from '@/lib/printFormats';
 
 interface BarcodePreviewProps {
   config: BarcodeConfig;
@@ -335,12 +335,7 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
     }
   };
 
-  const printBarcode = async (formatId: PrintFormatId) => {
-    const printFormat = PRINT_FORMAT_REGISTRY[formatId];
-    await printWithFormat(printFormat);
-  };
-
-  const customPrintBarcode = async (format: PrintFormat) => {
+  const printBarcode = async (format: PrintFormat) => {
     await printWithFormat(format);
   };
 
@@ -384,8 +379,7 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
           disabled={!isValid || !!renderError}
           onDownload={downloadBarcode}
           onCopy={copyToClipboard}
-          onPrint={printBarcode}
-          onCustomPrint={customPrintBarcode}
+          onCustomPrint={printBarcode}
         />
       </div>
 

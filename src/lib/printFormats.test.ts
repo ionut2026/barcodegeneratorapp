@@ -10,14 +10,13 @@ import {
 
 describe('printFormats', () => {
   describe('PRINT_FORMAT_REGISTRY', () => {
-    it('contains all seven format IDs', () => {
+    it('contains all six format IDs', () => {
       const ids: PrintFormatId[] = [
         'label-100x50',
         'label-40x21',
         'label-100x50-page',
         'label-40x21-page',
         'a4-page',
-        'label-70x35-sheet',
         'label-70x25-sheet',
       ];
       for (const id of ids) {
@@ -27,7 +26,7 @@ describe('printFormats', () => {
     });
 
     it('PRINT_FORMATS list matches registry values', () => {
-      expect(PRINT_FORMATS).toHaveLength(7);
+      expect(PRINT_FORMATS).toHaveLength(6);
       for (const f of PRINT_FORMATS) {
         expect(PRINT_FORMAT_REGISTRY[f.id]).toBe(f);
       }
@@ -49,18 +48,6 @@ describe('printFormats', () => {
       expect(p40.mode).toBe('page-per-label');
       expect(p40.widthMm).toBe(40);
       expect(p40.heightMm).toBe(21);
-    });
-
-    it('70×35 sheet format uses a4-label-sheet mode with correct grid and dimensions', () => {
-      const f = PRINT_FORMAT_REGISTRY['label-70x35-sheet'];
-      expect(f.mode).toBe('a4-label-sheet');
-      expect(f.widthMm).toBe(70);
-      expect(f.heightMm).toBe(35);
-      expect(f.sheetCols).toBe(3);
-      expect(f.sheetRows).toBe(8);
-      expect(f.sheetTopMarginMm).toBe(-10);
-      expect(f.sheetBarcodeOffsetMm).toBe(0);
-      expect(f.sheetHorizontalOffsetMm).toBe(3);
     });
 
     it('70×25 sheet format uses a4-label-sheet mode with correct grid and dimensions', () => {
@@ -339,7 +326,7 @@ describe('printFormats', () => {
 
     it('creates an A4 portrait jsPDF for a4-label-sheet format', async () => {
       const { generatePrintPdf: gen } = await import('./printFormats');
-      const fmt = PRINT_FORMAT_REGISTRY['label-70x35-sheet'];
+      const fmt = PRINT_FORMAT_REGISTRY['label-70x25-sheet'];
       await gen([item()], fmt);
 
       const opts = constructorCalls[0][0] as { format: string; orientation: string };
@@ -349,7 +336,7 @@ describe('printFormats', () => {
 
     it('does not draw border rectangles in a4-label-sheet mode', async () => {
       const { generatePrintPdf: gen } = await import('./printFormats');
-      const fmt = PRINT_FORMAT_REGISTRY['label-70x35-sheet'];
+      const fmt = PRINT_FORMAT_REGISTRY['label-70x25-sheet'];
       await gen([item(), item(), item()], fmt);
 
       expect(lastInstance!.rect).not.toHaveBeenCalled();
@@ -357,7 +344,7 @@ describe('printFormats', () => {
 
     it('places 24 items on one page before adding a second page (3×8 grid)', async () => {
       const { generatePrintPdf: gen } = await import('./printFormats');
-      const fmt = PRINT_FORMAT_REGISTRY['label-70x35-sheet'];
+      const fmt = PRINT_FORMAT_REGISTRY['label-70x25-sheet'];
       const items = Array.from({ length: 25 }, (_, i) => item(`L${i}`));
       await gen(items, fmt);
 
@@ -367,15 +354,13 @@ describe('printFormats', () => {
 
     it('centres the label grid horizontally with rightward offset applied', async () => {
       const { generatePrintPdf: gen } = await import('./printFormats');
-      const fmt = PRINT_FORMAT_REGISTRY['label-70x35-sheet']; // sheetHorizontalOffsetMm = 3
+      const fmt = PRINT_FORMAT_REGISTRY['label-70x25-sheet']; // sheetHorizontalOffsetMm = 5.5
       await gen([item()], fmt);
 
       // addImage(dataUrl, 'PNG', x, y, ...) → x is at index 2
       const xArg = lastInstance!.addImage.mock.calls[0][2] as number;
-      // col=0 → centredX = (210-3*70)/2 + (70 - 33.87)/2 ≈ 18.06
-      // + horizontalOffset(3) = ≈21.06
       const imgWmm = 400 * 25.4 / 300;
-      const expectedX = (70 - imgWmm) / 2 + 3;
+      const expectedX = (70 - imgWmm) / 2 + 5.5;
       expect(xArg).toBeCloseTo(expectedX, 1);
     });
 
@@ -391,17 +376,15 @@ describe('printFormats', () => {
       expect(drawH).toBeCloseTo(150 * 25.4 / 300, 1); // ≈12.7mm
     });
 
-    it('negative sheetTopMarginMm positions barcode correctly (not clamped for 70×35)', async () => {
+    it('negative sheetTopMarginMm positions barcode correctly (not clamped for 70×25)', async () => {
       const { generatePrintPdf: gen } = await import('./printFormats');
-      const fmt = PRINT_FORMAT_REGISTRY['label-70x35-sheet']; // sheetTopMarginMm = -10
+      const fmt = PRINT_FORMAT_REGISTRY['label-70x25-sheet']; // sheetTopMarginMm = -13
       // item: 400×150 px at 300 dpi → imgHmm = 12.7mm
       await gen([item()], fmt);
 
       const yArg = lastInstance!.addImage.mock.calls[0][3] as number;
-      // cellY = -10, centeredY = -10 + 2 + (31 - 12.7)/2 = 1.15mm
-      // y = max(0, 1.15) = 1.15 (NOT clamped — this is the fix)
-      expect(yArg).toBeCloseTo(1.15, 1);
-      expect(yArg).toBeGreaterThan(0);
+      // cellY = -13, centeredY = -13 + 2 + (21 - 12.7)/2 = -6.85 → clamps to 0
+      expect(yArg).toBe(0);
     });
 
     it('clamps at y=0 (page boundary) for small labels where centering would be negative', async () => {

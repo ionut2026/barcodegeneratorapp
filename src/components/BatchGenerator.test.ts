@@ -1,19 +1,16 @@
 import { describe, it, expect } from 'vitest';
-import { validateInput } from '@/lib/barcodeUtils';
+import { validateInput, getFixedLength } from '@/lib/barcodeUtils';
 
 // Inline copy of generateRandomForFormat for isolated testing.
 // Once BatchGenerator exports this helper, import it directly.
 function generateRandomForFormat(format: string, count: number, stringLength: number): string[] {
   const isNumericOnly = [
-    'EAN13', 'EAN8', 'UPC', 'UPCE', 'ITF14', 'ITF',
+    'EAN13', 'EAN8', 'EAN5', 'EAN2', 'UPC', 'UPCE', 'ITF14', 'ITF',
     'MSI', 'MSI10', 'MSI11', 'pharmacode', 'codabar',
   ].includes(format);
 
-  let length = stringLength;
-  if (format === 'EAN13') length = 12;
-  if (format === 'EAN8') length = 7;
-  if (format === 'UPC') length = 11;
-  if (format === 'ITF14') length = 13;
+  const fixed = getFixedLength(format as any);
+  let length = fixed ?? stringLength;
   if (format === 'ITF' && length % 2 !== 0) length = Math.max(2, length - 1);
 
   if (format === 'pharmacode') {
@@ -81,6 +78,34 @@ describe('generateRandomForFormat — fixed-length formats', () => {
     const values = generateRandomForFormat('CODE39', 10, 6);
     for (const v of values) {
       expect(v).toMatch(/^[0-9A-Z]+$/);
+    }
+  });
+
+  it('EAN5 always generates exactly 5 digits (regression: previously alphanumeric)', () => {
+    const values = generateRandomForFormat('EAN5', 20, 8);
+    for (const v of values) {
+      expect(v).toMatch(/^\d{5}$/);
+    }
+  });
+
+  it('EAN2 always generates exactly 2 digits (regression: previously alphanumeric)', () => {
+    const values = generateRandomForFormat('EAN2', 20, 8);
+    for (const v of values) {
+      expect(v).toMatch(/^\d{2}$/);
+    }
+  });
+
+  it('EAN8 always generates 7 digits', () => {
+    const values = generateRandomForFormat('EAN8', 10, 8);
+    for (const v of values) {
+      expect(v).toMatch(/^\d{7}$/);
+    }
+  });
+
+  it('ITF14 always generates 13 digits', () => {
+    const values = generateRandomForFormat('ITF14', 10, 8);
+    for (const v of values) {
+      expect(v).toMatch(/^\d{13}$/);
     }
   });
 });
