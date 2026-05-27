@@ -50,9 +50,13 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src")
     },
   },
-  // CRITICAL: This ensures all file paths in index.html are relative (./)
-  // so Electron can load them from the local folder.
-  base: '/barcodegeneratorapp/', 
+  // Base path resolution:
+  //   - Electron (file://) and local previews need relative paths ('./') so
+  //     that index.html can resolve /assets/* from the app folder.
+  //   - GitHub Pages deploy serves the app from /barcodegeneratorapp/ and
+  //     requires that prefix. The deploy workflow sets VITE_BASE accordingly.
+  // Defaulting to './' keeps `npm run electron:build` working out-of-the-box.
+  base: process.env.VITE_BASE ?? './',
   build: {
     outDir: 'dist',
     emptyOutDir: true, // Cleans the folder before building

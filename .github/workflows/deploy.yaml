@@ -32,6 +32,8 @@ jobs:
 
       - name: Build Web Version
         run: npm run build
+        env:
+          VITE_BASE: /barcodegeneratorapp/
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
