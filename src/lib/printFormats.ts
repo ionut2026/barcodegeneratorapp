@@ -7,6 +7,7 @@ export type PrintFormatId =
   | 'label-100x50-page'
   | 'label-40x21-page'
   | 'a4-page'
+  | 'label-70x35-sheet'
   | 'label-70x25-sheet';
 
 // Layout mode for the generated PDF:
@@ -111,6 +112,20 @@ export const PRINT_FORMAT_REGISTRY: Record<PrintFormatId, PrintFormat> = {
     heightMm: 297,
     marginMm: 10,
     mode: 'a4-grid',
+  },
+  'label-70x35-sheet': {
+    id: 'label-70x35-sheet',
+    label: '70 × 35 mm Label Sheet',
+    description: '3 × 8 grid on A4 · print at Actual Size (100%)',
+    widthMm: 70,
+    heightMm: 35,
+    marginMm: 2,
+    mode: 'a4-label-sheet',
+    sheetCols: 3,
+    sheetRows: 8,
+    sheetTopMarginMm: -10,
+    sheetBarcodeOffsetMm: 0,
+    sheetHorizontalOffsetMm: 3,
   },
   'label-70x25-sheet': {
     id: 'label-70x25-sheet',

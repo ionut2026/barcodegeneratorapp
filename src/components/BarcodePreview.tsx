@@ -473,13 +473,6 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
               </span>
             </div>
           </div>
-          {snap.requestedMils.toFixed(2) !== snap.actualMils.toFixed(2) && (
-            <div className="mt-3 p-2 rounded-lg bg-amber-500/10 border border-amber-500/20">
-              <p className="text-xs text-amber-400/90">
-                ⚠ Requested {snap.requestedMils.toFixed(2)} mil was adjusted to {snap.actualMils.toFixed(2)} mil due to pixel snapping at {config.dpi} DPI
-              </p>
-            </div>
-          )}
         </div>
       )}
 
