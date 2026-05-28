@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import JsBarcode from 'jsbarcode';
 import bwipjs from 'bwip-js';
-import { BarcodeConfig, is2DBarcode, normalizeForRendering, applyChecksum, QUALITY_LEVELS, physicalPxScale } from '@/lib/barcodeUtils';
+import { BarcodeConfig, is2DBarcode, normalizeForRendering, applyChecksum, QUALITY_LEVELS, physicalPxScale, clampBwipTextsize } from '@/lib/barcodeUtils';
 import { ImageEffectsConfig } from '@/components/ImageEffects';
 
 export interface UseBarcodeRendererResult {
@@ -225,7 +225,7 @@ export function useBarcodeRenderer(
         text: barcodeText,
         scale: Math.max(1, Math.round(effectiveWidth * config.scale)),
         includetext: config.displayValue,
-        textsize: Math.max(1, Math.round(config.fontSize * config.scale * dpiScale)),
+        textsize: clampBwipTextsize(config.fontSize * config.scale * dpiScale),
         textxalign: 'center',
         backgroundcolor: config.background.replace('#', ''),
         barcolor: config.lineColor.replace('#', ''),
@@ -435,7 +435,7 @@ export function useBarcodeRenderer(
           text: barcodeText,
           scale: modulePixels,
           includetext: config.displayValue,
-          textsize: Math.max(1, Math.round(config.fontSize * dpiScale)),
+          textsize: clampBwipTextsize(config.fontSize * dpiScale),
           textxalign: 'center',
           backgroundcolor: config.background.replace('#', ''),
           barcolor: config.lineColor.replace('#', ''),

@@ -965,6 +965,24 @@ export function physicalPxScale(dpi: number): number {
   return dpi / BASE_DPI;
 }
 
+/**
+ * bwip-js hard-limits `textsize` to the open interval (0, 25) — passing 25 or
+ * higher throws `bwipp.renmatrixBadTextsize`. Our render code multiplies the
+ * user-selected fontSize by DPI scale to keep text physically consistent across
+ * DPIs; at 600+ DPI that product easily exceeds bwip's ceiling and crashes the
+ * 2D render path (Generate tab, Batch tab, export, print).
+ *
+ * Clamp to the [1, 24] integer range so we always honour bwip's contract. The
+ * trade-off: at very high DPI with large fonts the human-readable text caps at
+ * ~24pt instead of scaling further. This only affects the on-bar text label,
+ * not the barcode modules themselves, so scannability is unchanged.
+ */
+export const BWIP_MAX_TEXTSIZE = 24;
+export function clampBwipTextsize(value: number): number {
+  if (!Number.isFinite(value) || value <= 0) return 1;
+  return Math.min(BWIP_MAX_TEXTSIZE, Math.max(1, Math.round(value)));
+}
+
 export function snapToPixelGrid(widthMils: number, dpi: number): {
   modulePixels: number;
   actualMils: number;

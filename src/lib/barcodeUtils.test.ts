@@ -25,6 +25,8 @@ import {
   getDefaultConfig,
   getApplicableChecksums,
   calculateGS1Mod10,
+  clampBwipTextsize,
+  BWIP_MAX_TEXTSIZE,
 } from './barcodeUtils';
 
 // ---------------------------------------------------------------------------
@@ -1143,5 +1145,40 @@ describe('getFixedLength', () => {
     expect(getFixedLength('azteccode')).toBeNull();
     expect(getFixedLength('datamatrix')).toBeNull();
     expect(getFixedLength('pdf417')).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// clampBwipTextsize — regression guard for bwip-js textsize hard limit.
+// bwip-js throws `bwipp.renmatrixBadTextsize` when textsize >= 25. This bit
+// 2D rendering at 600 DPI because fontSize (default 20) * dpiScale (2) = 40.
+// ---------------------------------------------------------------------------
+describe('clampBwipTextsize', () => {
+  it('returns the rounded value when within the bwip-js range', () => {
+    expect(clampBwipTextsize(12)).toBe(12);
+    expect(clampBwipTextsize(20)).toBe(20);
+    expect(clampBwipTextsize(24)).toBe(24);
+  });
+
+  it('caps at 24 (bwip-js requires textsize < 25)', () => {
+    expect(clampBwipTextsize(25)).toBe(24);
+    expect(clampBwipTextsize(40)).toBe(24);   // fontSize 20 @ 600 DPI
+    expect(clampBwipTextsize(80)).toBe(24);   // fontSize 20 @ 1200 DPI
+    expect(clampBwipTextsize(112)).toBe(24);  // fontSize 28 @ 1200 DPI
+    expect(clampBwipTextsize(Number.MAX_SAFE_INTEGER)).toBe(BWIP_MAX_TEXTSIZE);
+  });
+
+  it('floors at 1 for zero / negative / non-finite inputs', () => {
+    expect(clampBwipTextsize(0)).toBe(1);
+    expect(clampBwipTextsize(-5)).toBe(1);
+    expect(clampBwipTextsize(0.4)).toBe(1);
+    expect(clampBwipTextsize(NaN)).toBe(1);
+    expect(clampBwipTextsize(Infinity)).toBe(1);
+  });
+
+  it('rounds fractional values', () => {
+    expect(clampBwipTextsize(12.4)).toBe(12);
+    expect(clampBwipTextsize(12.6)).toBe(13);
+    expect(clampBwipTextsize(24.5)).toBe(24);
   });
 });

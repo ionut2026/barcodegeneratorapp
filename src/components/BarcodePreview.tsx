@@ -1,7 +1,7 @@
 import { useMemo, useState, useEffect, useRef } from 'react';
 import JsBarcode from 'jsbarcode';
 import bwipjs from 'bwip-js';
-import { BarcodeConfig, normalizeForRendering, snapToPixelGrid, physicalPxScale } from '@/lib/barcodeUtils';
+import { BarcodeConfig, normalizeForRendering, snapToPixelGrid, physicalPxScale, clampBwipTextsize } from '@/lib/barcodeUtils';
 import { injectPngDpi } from '@/lib/barcodeImageGenerator';
 import { ImageEffectsConfig, getDefaultEffectsConfig } from '@/components/ImageEffects';
 import { AlertCircle, ShieldCheck, FileJson, Loader2 } from 'lucide-react';
@@ -257,7 +257,7 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
           text: barcodeText,
           scale: modulePixels,
           includetext: config.displayValue,
-          textsize: Math.max(1, Math.round(config.fontSize * dpiScale)),
+          textsize: clampBwipTextsize(config.fontSize * dpiScale),
           textxalign: 'center',
           backgroundcolor: config.background.replace('#', ''),
           barcolor: config.lineColor.replace('#', ''),
