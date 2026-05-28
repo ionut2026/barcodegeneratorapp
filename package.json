@@ -10,7 +10,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "build:dev": "vite build --mode development",
-    "electron:build": "npm run build && electron-builder --publish never",
+    "electron:build": "npm run build && node scripts/build-electron.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "setup": "npm install",
@@ -33,20 +33,23 @@
     ],
     "win": {
       "icon": "build/icon.ico",
-      "signAndEditExecutable": false,
       "target": [
         "nsis",
         "portable"
       ]
     },
     "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
       "installerIcon": "build/icon.ico",
       "uninstallerIcon": "build/icon.ico",
       "installerHeaderIcon": "build/icon.ico",
-      "artifactName": "${productName} Setup.${ext}"
+      "artifactName": "${productName} Setup ${version}.${ext}"
     },
     "portable": {
-      "artifactName": "${productName}.${ext}"
+      "artifactName": "${productName} ${version}.${ext}"
     }
   },
   "dependencies": {

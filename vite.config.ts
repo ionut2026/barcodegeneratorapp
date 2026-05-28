@@ -1,48 +1,18 @@
 import { defineConfig } from "vite"; // Use vite instead of vitest
 import react from "@vitejs/plugin-react-swc";
 import path from "path";
-import { execSync } from "child_process";
+import { createRequire } from "module";
 import pkg from "./package.json";
 
-// Resolve a monotonically increasing build number from git commit count and a
-// short SHA for traceability. Falls back silently when git isn't available
-// (e.g., CI shallow-clone edge cases, tarball installs) so `npm run build`
-// never fails because of a missing repository.
-function readGitInfo() {
-  const run = (cmd: string) =>
-    execSync(cmd, { stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
-  try {
-    // Manual override from package.json "buildNumber" field (set to a non-empty
-    // string to pin the build number). Then APP_BUILD env var, then git commit
-    // count, then CI-provided run numbers as a last-resort fallback (used only
-    // when there's no git history, e.g. tarball installs).
-    const manualBuild = pkg.buildNumber;
-    const manualOverride =
-      (manualBuild && /^\d+$/.test(manualBuild) ? manualBuild : null) ||
-      process.env.APP_BUILD;
-    let build: string;
-    if (manualOverride && /^\d+$/.test(manualOverride)) {
-      build = manualOverride;
-    } else {
-      try {
-        build = run("git rev-list --count HEAD");
-      } catch {
-        build =
-          process.env.GITHUB_RUN_NUMBER ||
-          process.env.BUILD_BUILDNUMBER ||
-          process.env.BUILD_NUMBER ||
-          process.env.CI_PIPELINE_IID ||
-          "0";
-      }
-    }
-    const commit = run("git rev-parse --short HEAD");
-    return { build, commit };
-  } catch {
-    return { build: "0", commit: "" };
-  }
-}
+// Single source of truth for build-number resolution — shared with
+// scripts/build-electron.mjs so the web bundle, installer filename, and EXE
+// version metadata all agree for a given commit. See scripts/build-number.cjs
+// for the priority order (package.json buildNumber → APP_BUILD env → git
+// commit count → CI run number fallback).
+const requireCjs = createRequire(import.meta.url);
+const { readBuildNumber, readCommit } = requireCjs("./scripts/build-number.cjs");
 
-const git = readGitInfo();
+const git = { build: readBuildNumber(pkg), commit: readCommit() };
 
 export default defineConfig({
   plugins: [react()],
