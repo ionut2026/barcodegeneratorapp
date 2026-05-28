@@ -12,22 +12,29 @@ function readGitInfo() {
   const run = (cmd: string) =>
     execSync(cmd, { stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
   try {
-    // Prefer CI-provided build number if set (GitHub Actions, Azure DevOps,
-    // etc.). This keeps build numbers aligned with CI run identifiers when
-    // building in a pipeline.
     // Manual override from package.json "buildNumber" field (set to a non-empty
-    // string to pin the build number). Falls back to env vars, then git count.
+    // string to pin the build number). Then APP_BUILD env var, then git commit
+    // count, then CI-provided run numbers as a last-resort fallback (used only
+    // when there's no git history, e.g. tarball installs).
     const manualBuild = pkg.buildNumber;
-    const ciBuild =
+    const manualOverride =
       (manualBuild && /^\d+$/.test(manualBuild) ? manualBuild : null) ||
-      process.env.APP_BUILD ||
-      process.env.GITHUB_RUN_NUMBER ||
-      process.env.BUILD_BUILDNUMBER ||
-      process.env.BUILD_NUMBER ||
-      process.env.CI_PIPELINE_IID;
-    const build = ciBuild && /^\d+$/.test(ciBuild)
-      ? ciBuild
-      : run("git rev-list --count HEAD");
+      process.env.APP_BUILD;
+    let build: string;
+    if (manualOverride && /^\d+$/.test(manualOverride)) {
+      build = manualOverride;
+    } else {
+      try {
+        build = run("git rev-list --count HEAD");
+      } catch {
+        build =
+          process.env.GITHUB_RUN_NUMBER ||
+          process.env.BUILD_BUILDNUMBER ||
+          process.env.BUILD_NUMBER ||
+          process.env.CI_PIPELINE_IID ||
+          "0";
+      }
+    }
     const commit = run("git rev-parse --short HEAD");
     return { build, commit };
   } catch {
