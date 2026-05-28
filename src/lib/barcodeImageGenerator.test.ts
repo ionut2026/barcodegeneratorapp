@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { injectPngDpi, generateBarcodeSVGString, generateBarcodeSVGBlob } from './barcodeImageGenerator';
+import { injectPngDpi, generateBarcodeSVGString, generateBarcodeSVGBlob, appendValueLabelToCanvas } from './barcodeImageGenerator';
 
 // Minimal valid 1×1 white PNG (no pHYs) — 67 bytes.
 // Generated from a known-good 1×1 PNG stripped of all optional chunks.
@@ -218,5 +218,47 @@ describe('render2DToCanvas — padding parameter is DPI-stable', () => {
     expect(bwipPaddingFor(600, 5, 20)).toBe(20);
     expect(bwipPaddingFor(96, 1, 5)).toBe(5);
     expect(bwipPaddingFor(300, 2, 0)).toBe(0);
+  });
+});
+
+describe('appendValueLabelToCanvas', () => {
+  // Minimal HTMLCanvasElement stub for jsdom. jsdom's canvas has no real 2D
+  // engine, but the helper only depends on width/height assignment and that
+  // getContext returns a context-like object — we don't validate pixel data.
+  function makeCanvas(w: number, h: number): HTMLCanvasElement {
+    const c = document.createElement('canvas');
+    c.width = w;
+    c.height = h;
+    return c;
+  }
+
+  it('returns a new canvas larger than the source (room for label)', () => {
+    const src = makeCanvas(100, 100);
+    const out = appendValueLabelToCanvas(src, 'HELLO', 16, 'monospace', '#ffffff', '#000000');
+    expect(out).not.toBe(src);
+    expect(out.width).toBe(100);
+    expect(out.height).toBeGreaterThan(100);
+  });
+
+  it('label row scales linearly with fontSize', () => {
+    const src = makeCanvas(200, 200);
+    const small = appendValueLabelToCanvas(src, 'X', 10, 'monospace', '#fff', '#000');
+    const large = appendValueLabelToCanvas(src, 'X', 30, 'monospace', '#fff', '#000');
+    expect(large.height - 200).toBeGreaterThan(small.height - 200);
+  });
+
+  it('clamps tiny fontSize to a minimum so output is still readable', () => {
+    const src = makeCanvas(50, 50);
+    const tiny = appendValueLabelToCanvas(src, 'X', 1, 'monospace', '#fff', '#000');
+    // Helper enforces fontSize >= 8 → gap=3, textRow=10 → +13
+    expect(tiny.height).toBe(50 + 3 + 10);
+  });
+
+  it('preserves source width regardless of text content', () => {
+    const src = makeCanvas(123, 80);
+    const out1 = appendValueLabelToCanvas(src, 'A', 16, 'monospace', '#fff', '#000');
+    const out2 = appendValueLabelToCanvas(src, 'ABCDEFGHIJKLMNOPQRSTUV', 16, 'monospace', '#fff', '#000');
+    expect(out1.width).toBe(123);
+    expect(out2.width).toBe(123);
   });
 });

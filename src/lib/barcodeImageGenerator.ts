@@ -66,6 +66,53 @@ export function injectPngDpi(dataUrl: string, dpi: number): string {
   return 'data:image/png;base64,' + btoa(str);
 }
 
+/**
+ * Append a centred text label below a source canvas's bitmap.
+ *
+ * 2D barcode specs (QR / Data Matrix / Aztec / PDF417) don't include human-
+ * readable text (HRI) — bwip-js silently ignores `includetext` for these
+ * formats. To give parity with 1D barcodes (where JsBarcode draws the value
+ * into the SVG itself), we draw the label onto the canvas after rendering.
+ *
+ * Returns a NEW canvas so the original bitmap is preserved for callers that
+ * want both labelled and unlabelled outputs. Falls back to returning the
+ * input canvas if the 2d context can't be acquired (extremely rare).
+ *
+ * Layout (matches JsBarcode's HRI spacing roughly):
+ *   gap        = round(fontSize × 0.4)
+ *   textRow    = round(fontSize × 1.2)
+ *   totalH     = src.height + gap + textRow
+ *
+ * The text is drawn baseline-centred in the text row using textBaseline
+ * 'middle' so descenders don't get clipped at small font sizes.
+ */
+export function appendValueLabelToCanvas(
+  src: HTMLCanvasElement,
+  text: string,
+  fontSizePx: number,
+  fontFamily: string,
+  bgColor: string,
+  textColor: string,
+): HTMLCanvasElement {
+  const fontSize = Math.max(8, Math.round(fontSizePx));
+  const gap = Math.round(fontSize * 0.4);
+  const textRow = Math.round(fontSize * 1.2);
+  const out = document.createElement('canvas');
+  out.width = src.width;
+  out.height = src.height + gap + textRow;
+  const ctx = out.getContext('2d');
+  if (!ctx) return out;
+  ctx.fillStyle = bgColor;
+  ctx.fillRect(0, 0, out.width, out.height);
+  ctx.drawImage(src, 0, 0);
+  ctx.font = `${fontSize}px ${fontFamily}`;
+  ctx.fillStyle = textColor;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, out.width / 2, src.height + gap + textRow / 2);
+  return out;
+}
+
 export interface BarcodeImageResult {
   dataUrl: string;
   width: number;

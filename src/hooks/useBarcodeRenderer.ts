@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import JsBarcode from 'jsbarcode';
 import bwipjs from 'bwip-js';
 import { BarcodeConfig, is2DBarcode, normalizeForRendering, applyChecksum, QUALITY_LEVELS, physicalPxScale, clampBwipTextsize } from '@/lib/barcodeUtils';
+import { appendValueLabelToCanvas } from '@/lib/barcodeImageGenerator';
 import { ImageEffectsConfig } from '@/components/ImageEffects';
 
 export interface UseBarcodeRendererResult {
@@ -238,7 +239,24 @@ export function useBarcodeRenderer(
       }
 
       bwipjs.toCanvas(barcodeCanvasRef.current, bwipOptions as unknown as Parameters<typeof bwipjs.toCanvas>[1]);
-      setBarcodeDataUrl(barcodeCanvasRef.current.toDataURL('image/png'));
+      // bwip-js silently ignores `includetext` for QR/Datamatrix/Aztec/PDF417
+      // (no HRI in spec). When the user has displayValue on, draw the value
+      // manually onto a temp canvas so the preview matches 1D parity.
+      if (config.displayValue && barcodeText) {
+        const labelled = appendValueLabelToCanvas(
+          barcodeCanvasRef.current,
+          barcodeText,
+          config.fontSize * config.scale * dpiScale,
+          "'JetBrains Mono', 'Courier New', monospace",
+          config.background,
+          config.lineColor,
+        );
+        setBarcodeDataUrl(labelled.toDataURL('image/png'));
+        labelled.width = 0;
+        labelled.height = 0;
+      } else {
+        setBarcodeDataUrl(barcodeCanvasRef.current.toDataURL('image/png'));
+      }
       setRenderError(null);
     } catch (error) {
       console.error('2D Barcode render error:', error);
@@ -447,19 +465,40 @@ export function useBarcodeRenderer(
         }
         bwipjs.toCanvas(tempCanvas, bwipOptions as unknown as Parameters<typeof bwipjs.toCanvas>[1]);
 
+        // Append HRI text below the 2D bitmap when displayValue is on (bwip-js
+        // ignores includetext for QR/Datamatrix/Aztec/PDF417). Use 'Courier'
+        // for exports — system-safe in isolated rasterisation contexts.
+        let sourceCanvas = tempCanvas;
+        let labelCanvas: HTMLCanvasElement | null = null;
+        if (config.displayValue && barcodeText) {
+          labelCanvas = appendValueLabelToCanvas(
+            tempCanvas,
+            barcodeText,
+            config.fontSize * dpiScale,
+            "'Courier New', monospace",
+            config.background,
+            config.lineColor,
+          );
+          sourceCanvas = labelCanvas;
+        }
+
         if (effects.enableEffects) {
           const img = new Image();
           await new Promise<void>((resolve) => {
             img.onload = () => { applyEffects(exportCtx, exportCanvas, img); resolve(); };
-            img.src = tempCanvas.toDataURL('image/png');
+            img.src = sourceCanvas.toDataURL('image/png');
           });
         } else {
-          exportCanvas.width = tempCanvas.width;
-          exportCanvas.height = tempCanvas.height;
-          exportCtx.drawImage(tempCanvas, 0, 0);
+          exportCanvas.width = sourceCanvas.width;
+          exportCanvas.height = sourceCanvas.height;
+          exportCtx.drawImage(sourceCanvas, 0, 0);
         }
         tempCanvas.width = 0;
         tempCanvas.height = 0;
+        if (labelCanvas) {
+          labelCanvas.width = 0;
+          labelCanvas.height = 0;
+        }
         applyQualityBlurInPlace(exportCanvas);
         return exportCanvas;
       } catch (e) {

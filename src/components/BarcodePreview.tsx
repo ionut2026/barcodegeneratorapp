@@ -2,7 +2,7 @@ import { useMemo, useState, useEffect, useRef } from 'react';
 import JsBarcode from 'jsbarcode';
 import bwipjs from 'bwip-js';
 import { BarcodeConfig, normalizeForRendering, snapToPixelGrid, physicalPxScale, clampBwipTextsize } from '@/lib/barcodeUtils';
-import { injectPngDpi } from '@/lib/barcodeImageGenerator';
+import { injectPngDpi, appendValueLabelToCanvas } from '@/lib/barcodeImageGenerator';
 import { ImageEffectsConfig, getDefaultEffectsConfig } from '@/components/ImageEffects';
 import { AlertCircle, ShieldCheck, FileJson, Loader2 } from 'lucide-react';
 import { useCertification } from '@/hooks/useCertification';
@@ -268,11 +268,30 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
           bwipOptions.width = Math.floor((config.height * dpiScale) / 3);
         }
         bwipjs.toCanvas(tempCanvas, bwipOptions as unknown as Parameters<typeof bwipjs.toCanvas>[1]);
-        dataUrl = tempCanvas.toDataURL('image/png');
-        widthPx = tempCanvas.width;
-        heightPx = tempCanvas.height;
+        // Append HRI text below the 2D bitmap when displayValue is on
+        // (bwip-js ignores includetext for QR/Datamatrix/Aztec/PDF417).
+        let printSource = tempCanvas;
+        let printLabelCanvas: HTMLCanvasElement | null = null;
+        if (config.displayValue && barcodeText) {
+          printLabelCanvas = appendValueLabelToCanvas(
+            tempCanvas,
+            barcodeText,
+            config.fontSize * dpiScale,
+            "'Courier New', monospace",
+            config.background,
+            config.lineColor,
+          );
+          printSource = printLabelCanvas;
+        }
+        dataUrl = printSource.toDataURL('image/png');
+        widthPx = printSource.width;
+        heightPx = printSource.height;
         tempCanvas.width = 0;
         tempCanvas.height = 0;
+        if (printLabelCanvas) {
+          printLabelCanvas.width = 0;
+          printLabelCanvas.height = 0;
+        }
         dataUrl = await applyQualityBlur(dataUrl, widthPx, heightPx);
       } else {
         // 1D barcode: render via JsBarcode to SVG, then rasterize to PNG

@@ -8,7 +8,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Slider } from '@/components/ui/slider';
 import { Progress } from '@/components/ui/progress';
-import { Shuffle, Maximize2, Plus, Trash2, Package, Ruler } from 'lucide-react';
+import { Shuffle, Maximize2, Plus, Trash2, Package, Ruler, RotateCcw } from 'lucide-react';
 import { toast } from 'sonner';
 
 const DEFAULTS = getDefaultConfig();
@@ -133,6 +133,19 @@ export function BatchGenerator({ onImagesGenerated, onActionsReady }: BatchGener
   const setSnappedMils = (mils: number, overrideDpi = dpi) => {
     setWidthMils(mils);
     if (overrideDpi !== dpi) setDpi(overrideDpi);
+  };
+
+  // Reset the Dimensions section back to the canonical defaults. Mirrors the
+  // Generate tab's `resetDimensions` (BarcodeControls.tsx) so users get
+  // consistent muscle memory across both screens. `scale` is the batch-local
+  // Output Size multiplier; resetting to 1 matches the Medium preset.
+  const resetDimensions = () => {
+    setWidthMils(DEFAULTS.widthMils);
+    setDpi(DEFAULTS.dpi);
+    setHeight(DEFAULTS.height);
+    setMargin(DEFAULTS.margin);
+    setScale(1);
+    setActivePreset(7.5);
   };
 
   const applicableChecksums = getApplicableChecksums(format);
@@ -510,11 +523,22 @@ export function BatchGenerator({ onImagesGenerated, onActionsReady }: BatchGener
 
         {/* Dimensions */}
         <div className="space-y-3">
-          <div className="flex items-center gap-2">
-            <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center">
-              <Ruler className="h-4 w-4 text-primary" />
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center">
+                <Ruler className="h-4 w-4 text-primary" />
+              </div>
+              <Label>Dimensions</Label>
             </div>
-            <Label>Dimensions</Label>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={resetDimensions}
+              className="gap-1.5 h-8 px-3 text-xs text-muted-foreground hover:text-foreground"
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+              Reset
+            </Button>
           </div>
 
           <div className="space-y-3">
