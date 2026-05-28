@@ -49,16 +49,31 @@ const Index = () => {
     if (batchImages.length === 0) return;
 
     // Overflow check — refuse rather than silently scale (which would
-    // reduce X-dimension and degrade scannability). Use the largest image
-    // in the batch as the gating dimensions.
+    // reduce X-dimension and degrade scannability). Identify every
+    // offending barcode so the user knows which values to adjust.
     {
-      const widest = batchImages.reduce((m, i) => (i.width > m.width ? i : m), batchImages[0]);
-      const tallest = batchImages.reduce((m, i) => (i.height > m.height ? i : m), batchImages[0]);
-      const fit = checkBarcodeFit(widest.width, tallest.height, config.dpi, printFormat);
-      if (!fit.fits) {
-        toast.warning(
-          `Barcode (${fit.barcodeWidthMm.toFixed(1)} \u00d7 ${fit.barcodeHeightMm.toFixed(1)} mm) exceeds ${printFormat.label} printable area (${fit.printableWidthMm.toFixed(1)} \u00d7 ${fit.printableHeightMm.toFixed(1)} mm). Reduce bar width or bar height to fit.`,
-          { duration: 8000 }
+      const offenders = batchImages
+        .map(img => ({ img, fit: checkBarcodeFit(img.width, img.height, config.dpi, printFormat) }))
+        .filter(o => !o.fit.fits);
+
+      if (offenders.length > 0) {
+        const printable = offenders[0].fit;
+        const MAX_LISTED = 5;
+        const valueList = offenders.slice(0, MAX_LISTED).map(o => {
+          const { barcodeWidthMm, barcodeHeightMm } = o.fit;
+          return `\u2022 "${o.img.value}" (${barcodeWidthMm.toFixed(1)} \u00d7 ${barcodeHeightMm.toFixed(1)} mm)`;
+        }).join('\n');
+        const more = offenders.length > MAX_LISTED ? `\n\u2026 and ${offenders.length - MAX_LISTED} more` : '';
+
+        const toastId = toast.warning(
+          `${offenders.length} of ${batchImages.length} barcode(s) exceed ${printFormat.label} printable area (${printable.printableWidthMm.toFixed(1)} \u00d7 ${printable.printableHeightMm.toFixed(1)} mm). Reduce bar width or bar height to fit:\n${valueList}${more}`,
+          {
+            duration: Infinity,
+            action: {
+              label: 'Dismiss',
+              onClick: () => toast.dismiss(toastId),
+            },
+          }
         );
         return;
       }
