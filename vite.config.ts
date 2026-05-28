@@ -15,7 +15,12 @@ function readGitInfo() {
     // Prefer CI-provided build number if set (GitHub Actions, Azure DevOps,
     // etc.). This keeps build numbers aligned with CI run identifiers when
     // building in a pipeline.
+    // Manual override from package.json "buildNumber" field (set to a non-empty
+    // string to pin the build number). Falls back to env vars, then git count.
+    const manualBuild = pkg.buildNumber;
     const ciBuild =
+      (manualBuild && /^\d+$/.test(manualBuild) ? manualBuild : null) ||
+      process.env.APP_BUILD ||
       process.env.GITHUB_RUN_NUMBER ||
       process.env.BUILD_BUILDNUMBER ||
       process.env.BUILD_NUMBER ||

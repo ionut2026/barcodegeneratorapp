@@ -1,7 +1,7 @@
 {
   "name": "barcodegeneratorapp",
   "version": "1.0.0",
-  "buildNumber": "",
+  "buildNumber": "1",
   "description": "Barcode Generator Desktop App",
   "main": "electron/main.js",
   "author": "Ionut Pop",
