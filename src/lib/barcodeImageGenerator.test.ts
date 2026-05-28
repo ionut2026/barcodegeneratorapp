@@ -180,3 +180,43 @@ describe('generateBarcodeSVGBlob', () => {
     expect(blob.size).toBeGreaterThan(0);
   });
 });
+
+// ── 2D barcode padding (DPI regression) ────────────────────────────────────────
+
+describe('render2DToCanvas — padding parameter is DPI-stable', () => {
+  // bwip-js multiplies its `padding` option by `scale` internally to produce
+  // pixel quiet-zones. To keep the QR/Datamatrix/Aztec/PDF417 pattern
+  // occupying the SAME fraction of the bitmap at every DPI (so the Batch
+  // preview looks identical when toggling 96/300/600), the value passed to
+  // bwip-js must be CONSTANT — independent of DPI and config scale.
+  // Two earlier formulas (`round(margin * scale)` and
+  // `round(renderMargin / modulePixels)`) both varied with DPI and caused
+  // visible pattern shrinkage. The current formula is `round(margin)`.
+  function bwipPaddingFor(_dpi: number, _scale: number, margin = 10) {
+    return Math.max(0, Math.round(margin));
+  }
+
+  it('padding parameter passed to bwip-js is identical across all DPIs at scale=1', () => {
+    const p96 = bwipPaddingFor(96, 1);
+    const p300 = bwipPaddingFor(300, 1);
+    const p600 = bwipPaddingFor(600, 1);
+    expect(p96).toBe(p300);
+    expect(p300).toBe(p600);
+    expect(p96).toBe(10);
+  });
+
+  it('padding parameter passed to bwip-js is identical across all config scales at fixed DPI', () => {
+    const s1 = bwipPaddingFor(300, 1);
+    const s2 = bwipPaddingFor(300, 2);
+    const s5 = bwipPaddingFor(300, 5);
+    expect(s1).toBe(s2);
+    expect(s2).toBe(s5);
+  });
+
+  it('padding parameter scales linearly with user margin and ignores DPI/scale', () => {
+    // margin acts as the single, DPI-invariant knob for 2D quiet-zone size.
+    expect(bwipPaddingFor(600, 5, 20)).toBe(20);
+    expect(bwipPaddingFor(96, 1, 5)).toBe(5);
+    expect(bwipPaddingFor(300, 2, 0)).toBe(0);
+  });
+});

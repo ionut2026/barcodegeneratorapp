@@ -75,6 +75,18 @@ export interface BarcodeImageResult {
   widthMm: number;
   /** Physical height in mm (based on effective DPI). */
   heightMm: number;
+  /**
+   * Display aspect ratio (height/width) for DPI-invariant previewing.
+   *
+   * The raw bitmap aspect can wobble between DPIs because `modulePixels`
+   * rounds non-linearly (0.72→1, 2.25→2, 4.5→5) while the height multiplier
+   * is linear. Consumers that want a thumbnail whose visible height does
+   * NOT change when toggling DPI buttons should compute
+   *   `displayHeight = displayWidth * displayAspectRatio`
+   * instead of letting CSS auto-derive height from the bitmap. The actual
+   * PNG bytes / embedded DPI / physical mm are unaffected.
+   */
+  displayAspectRatio?: number;
   /** Optional label for the barcode format (used by batch mode). */
   formatLabel?: string;
   /** Optional label for the checksum type (used by batch mode). */
@@ -143,16 +155,25 @@ function render2DToCanvas(
   value: string,
   format: BarcodeFormat,
   scale: number,
-  margin: number,
+  paddingUnits: number,
   modulePixels: number,
 ): { dataUrl: string; width: number; height: number } {
   const canvas = document.createElement('canvas');
   const moduleScale = Math.max(1, Math.round(modulePixels * scale));
+  // bwip-js's `padding` is in "scale units" — at render time it multiplies
+  // padding by the `scale` option to get pixels. To keep the QR/Datamatrix/
+  // Aztec/PDF417 pattern occupying the SAME fraction of the bitmap at every
+  // DPI (so the Batch preview looks identical when toggling 96/300/600), we
+  // must pass a CONSTANT padding value here — independent of DPI and config
+  // scale. The effective pixel quiet-zone then scales proportionally with
+  // the module size (which is spec-correct: QR/etc. measure quiet zone in
+  // modules, not millimetres).
+  const padding = Math.max(0, Math.round(paddingUnits));
   const bwipOptions: Record<string, unknown> = {
     bcid: format,
     text: value,
     scale: moduleScale,
-    padding: Math.round(margin * scale),
+    padding,
     backgroundcolor: 'FFFFFF',
     barcolor: '000000',
     includetext: false,
@@ -206,10 +227,37 @@ export async function generateBarcodeImage(
   try {
     let raw: { dataUrl: string; width: number; height: number };
     if (is2DBarcode(format)) {
-      raw = render2DToCanvas(value, format, scale, renderMargin, modulePixels);
+      // For 2D barcodes we pass the RAW `margin` (in bwip-js padding units —
+      // ~half-modules of quiet zone per side) so the pattern-to-bitmap ratio
+      // stays constant across DPIs. Do NOT use `renderMargin` here: bwip-js
+      // already scales padding by its `scale` option, so any DPI-multiplied
+      // value would compound and shrink the visible pattern at higher DPIs.
+      raw = render2DToCanvas(value, format, scale, margin, modulePixels);
     } else {
       raw = await render1DToCanvas(value, format, scale, renderMargin, modulePixels, renderHeight);
     }
+
+    // Compute a DPI-invariant display aspect ratio for thumbnails. The bitmap
+    // itself is NOT modified — only consumers that want stable preview height
+    // when toggling DPI buttons read this value. For 2D the bitmap aspect is
+    // already DPI-stable (modules scale uniformly), so we use it directly.
+    // For 1D, `bitmap_width` depends on rounded `modulePixels` while
+    // `bitmap_height` scales linearly with `dpiScale`, so we reverse-engineer
+    // the bar count and recompute the aspect at the canonical 300 DPI.
+    let displayAspectRatio = raw.height / Math.max(1, raw.width);
+    if (!is2DBarcode(format) && scale > 0) {
+      const marginPxPerSide = Math.round(renderMargin * scale);
+      const barWidthPx = Math.max(1, Math.round(modulePixels * scale));
+      const barsTotalPx = Math.max(0, raw.width - 2 * marginPxPerSide);
+      const numBars = Math.max(1, Math.round(barsTotalPx / barWidthPx));
+      const canonicalModulePx = Math.max(1, Math.round(widthMils * 300 / 1000));
+      const canonicalWidth = numBars * canonicalModulePx + 2 * margin;
+      const canonicalHeight = height;
+      if (canonicalWidth > 0) {
+        displayAspectRatio = canonicalHeight / canonicalWidth;
+      }
+    }
+
     return {
       dataUrl: injectPngDpi(raw.dataUrl, effectiveDpi),
       width: raw.width,
@@ -217,6 +265,7 @@ export async function generateBarcodeImage(
       value,
       widthMm: +(raw.width * 25.4 / effectiveDpi).toFixed(2),
       heightMm: +(raw.height * 25.4 / effectiveDpi).toFixed(2),
+      displayAspectRatio,
     };
   } catch (e) {
     console.warn(`Failed to generate barcode for: ${value}`, e);

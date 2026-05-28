@@ -28,6 +28,8 @@ export interface BatchActions {
   exportAsPDF: () => Promise<void>;
   isDisabled: boolean;
   isGenerating: boolean;
+  /** Current Output Size preset (0.5 / 1 / 2 from buttons or 0.25–4 from slider). */
+  previewScale: number;
 }
 
 interface BatchGeneratorProps {
@@ -464,8 +466,8 @@ export function BatchGenerator({ onImagesGenerated, onActionsReady }: BatchGener
   const isDisabled = isGenerating || batches.length === 0;
 
   useEffect(() => {
-    onActionsReady?.({ downloadAsZip, exportAsPDF, isDisabled, isGenerating });
-  }, [downloadAsZip, exportAsPDF, isDisabled, isGenerating]);
+    onActionsReady?.({ downloadAsZip, exportAsPDF, isDisabled, isGenerating, previewScale: scale });
+  }, [downloadAsZip, exportAsPDF, isDisabled, isGenerating, scale]);
 
   const totalImages = batches.reduce((sum, b) => sum + b.images.length, 0);
 

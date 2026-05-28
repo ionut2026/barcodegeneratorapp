@@ -178,6 +178,7 @@ const Index = () => {
                 isGenerating={batchActions?.isGenerating ?? false}
                 actionsDisabled={batchActions?.isDisabled ?? true}
                 dpi={config.dpi}
+                previewScale={batchActions?.previewScale ?? 1}
               />
             ) : activeTab === 'checksum' ? (
               <ChecksumPreview

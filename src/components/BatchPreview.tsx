@@ -5,7 +5,7 @@ import { Printer, Layers, FileArchive, FileText, Download } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { PrintFormat } from '@/lib/printFormats';
 import { PrintConfigDialog } from '@/components/PrintConfigDialog';
-import { useState } from 'react';
+import { useState, type CSSProperties } from 'react';
 import { toast } from 'sonner';
 
 interface BatchPreviewProps {
@@ -16,11 +16,46 @@ interface BatchPreviewProps {
   isGenerating: boolean;
   actionsDisabled?: boolean;
   dpi?: number;
+  /**
+   * Output Size preset multiplier (Small=0.5, Medium=1, Large=2, slider 0.25–4).
+   * Drives the on-screen preview width so size changes are visually proportional
+   * regardless of DPI. Without this, at 600 DPI the bitmap for Medium/Large both
+   * exceed the cell width and get clamped to the same rendered size by
+   * `max-width: 100%`, which made Large appear "smaller" than expected after
+   * heavy nearest-neighbor downsampling of the QR pattern.
+   */
+  previewScale?: number;
 }
 
-export function BatchPreview({ images, onCustomPrint, onDownloadZip, onExportPDF, isGenerating, actionsDisabled, dpi = 300 }: BatchPreviewProps) {
+/**
+ * Base preview width in CSS pixels at scale=1 (Medium). Picked so the full
+ * 0.25–4× slider range stays useful within a typical batch grid cell (~250px)
+ * while keeping Small visibly smaller than Medium.
+ */
+const PREVIEW_BASE_PX = 120;
+
+export function BatchPreview({ images, onCustomPrint, onDownloadZip, onExportPDF, isGenerating, actionsDisabled, dpi = 300, previewScale = 1 }: BatchPreviewProps) {
   const btnDisabled = isGenerating || actionsDisabled;
   const [customPrintOpen, setCustomPrintOpen] = useState(false);
+  const previewWidthPx = Math.max(1, Math.round(PREVIEW_BASE_PX * previewScale));
+  // Per-image style: width is fixed by Output Size; height is derived from the
+  // image's `displayAspectRatio` (computed DPI-invariantly in the renderer) so
+  // that toggling 96/300/600 DPI does NOT visibly resize the thumbnail. Falls
+  // back to `height: auto` for older images that pre-date the field.
+  const makePreviewImgStyle = (img: BarcodeImageResult): CSSProperties => {
+    const aspect = img.displayAspectRatio;
+    const style: CSSProperties = {
+      width: `${previewWidthPx}px`,
+      maxWidth: '100%',
+      imageRendering: 'pixelated',
+    };
+    if (typeof aspect === 'number' && isFinite(aspect) && aspect > 0) {
+      style.height = `${Math.max(1, Math.round(previewWidthPx * aspect))}px`;
+    } else {
+      style.height = 'auto';
+    }
+    return style;
+  };
 
   const downloadBarcodeImage = (img: BarcodeImageResult) => {
     try {
@@ -241,12 +276,11 @@ export function BatchPreview({ images, onCustomPrint, onDownloadZip, onExportPDF
                            key={`${img.value}-${i}`}
                            className="flex flex-col items-center gap-2 p-3 rounded-xl bg-card/50 border border-border/30 group hover:border-primary/50 transition-colors"
                          >
-                           <div className="relative w-full">
+                           <div className="relative w-full flex justify-center">
                              <img
                                src={img.dataUrl}
                                alt={img.value}
-                               className="max-w-full h-auto"
-                               style={{ imageRendering: 'pixelated' }}
+                               style={makePreviewImgStyle(img)}
                              />
                              <Button
                                size="sm"
@@ -275,12 +309,11 @@ export function BatchPreview({ images, onCustomPrint, onDownloadZip, onExportPDF
                       key={`${img.value}-${i}`}
                       className="flex flex-col items-center gap-2 p-3 rounded-xl bg-card/50 border border-border/30 group hover:border-primary/50 transition-colors"
                     >
-                      <div className="relative w-full">
+                      <div className="relative w-full flex justify-center">
                         <img
                           src={img.dataUrl}
                           alt={img.value}
-                          className="max-w-full h-auto"
-                          style={{ imageRendering: 'pixelated' }}
+                          style={makePreviewImgStyle(img)}
                         />
                         <Button
                           size="sm"
