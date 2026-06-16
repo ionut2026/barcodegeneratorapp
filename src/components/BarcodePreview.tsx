@@ -1,7 +1,7 @@
 import { useMemo, useState, useEffect, useRef } from 'react';
 import JsBarcode from 'jsbarcode';
 import bwipjs from 'bwip-js';
-import { BarcodeConfig, normalizeForRendering, snapToPixelGrid, physicalPxScale, clampBwipTextsize } from '@/lib/barcodeUtils';
+import { BarcodeConfig, normalizeForRendering, snapToPixelGrid, physicalPxScale, clampBwipTextsize, getJsBarcodeFormat } from '@/lib/barcodeUtils';
 import { injectPngDpi, appendValueLabelToCanvas } from '@/lib/barcodeImageGenerator';
 import { ImageEffectsConfig, getDefaultEffectsConfig } from '@/components/ImageEffects';
 import { AlertCircle, ShieldCheck, FileJson, Loader2 } from 'lucide-react';
@@ -299,7 +299,7 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
         const tempSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
         const renderText = normalizeForRendering(barcodeText, config.format);
         JsBarcode(tempSvg, renderText, {
-          format: config.format,
+          format: getJsBarcodeFormat(config.format),
           width: modulePixels,
           height: config.height * dpiScale,
           displayValue: config.displayValue,

@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import JsBarcode from 'jsbarcode';
 import bwipjs from 'bwip-js';
-import { BarcodeConfig, is2DBarcode, normalizeForRendering, applyChecksum, QUALITY_LEVELS, physicalPxScale, clampBwipTextsize } from '@/lib/barcodeUtils';
+import { BarcodeConfig, is2DBarcode, normalizeForRendering, applyChecksum, QUALITY_LEVELS, physicalPxScale, clampBwipTextsize, getJsBarcodeFormat } from '@/lib/barcodeUtils';
 import { appendValueLabelToCanvas } from '@/lib/barcodeImageGenerator';
 import { ImageEffectsConfig } from '@/components/ImageEffects';
 
@@ -183,7 +183,7 @@ export function useBarcodeRenderer(
       // the same physical mm (sharper print, identical size).
       const dpiScale = physicalPxScale(config.dpi);
       JsBarcode(svgRef.current, renderText, {
-        format: config.format,
+        format: getJsBarcodeFormat(config.format),
         width: Math.max(1, Math.round(effectiveWidth * config.scale)),
         height: config.height * config.scale * dpiScale,
         displayValue: config.displayValue,
@@ -516,7 +516,7 @@ export function useBarcodeRenderer(
       const dpiScale = physicalPxScale(config.dpi);
       const tempSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
       JsBarcode(tempSvg, renderText, {
-        format: config.format,
+        format: getJsBarcodeFormat(config.format),
         width: modulePixels,
         height: config.height * dpiScale,
         displayValue: config.displayValue,

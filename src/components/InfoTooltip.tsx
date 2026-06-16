@@ -34,8 +34,11 @@ export function InfoTooltip({ content, className, side = 'left' }: InfoTooltipPr
         <div 
           className={cn(
             "info-tooltip absolute z-50 p-3 rounded-xl text-sm animate-fade-in bg-popover border border-border shadow-lg",
-            // CHANGED: Made width flexible with max-width
-            "w-auto min-w-[200px] max-w-[300px]",
+            // Wider max-width gives the monospaced "Accepted Symbols" /
+            // "Validation" rows enough room to wrap on natural word
+            // boundaries (e.g. "All ASCII characters" stays on one line)
+            // instead of breaking mid-phrase.
+            "w-auto min-w-[240px] max-w-[380px]",
             // Anchor tooltip to the top of the button (button is h-6 = 24px) so
             // it grows downward and never overflows above the parent container.
             side === 'right' 

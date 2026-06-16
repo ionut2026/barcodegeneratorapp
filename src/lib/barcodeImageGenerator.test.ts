@@ -159,6 +159,32 @@ describe('generateBarcodeSVGString', () => {
     const expectedMm = +(widthPx * 25.4 / 300).toFixed(2);
     expect(expectedMm).toBeCloseTo(25.4, 1);
   });
+
+  // Regression: previously CODE93 was passed verbatim to JsBarcode, whose
+  // plain CODE93 encoder only accepts `[0-9A-Z\-. $/+%]+`. Inputs containing
+  // lowercase letters or symbols like `@`, `#`, `$` would throw, surfacing
+  // as the "Render error" in the UI. The fix routes CODE93 through
+  // CODE93FullASCII so the full 0x00–0x7F range encodes via paired escape
+  // characters. Each input below would have failed before the fix.
+  describe('CODE93 full-ASCII regression', () => {
+    const cases: { name: string; value: string }[] = [
+      { name: 'lowercase letters', value: 'asddf1234' },
+      { name: '@ symbol',          value: 'A@B' },
+      { name: '# symbol',          value: 'A#B' },
+      { name: '$ symbol',          value: 'A$B' },
+      { name: 'mixed special',     value: 'foo@bar#baz!' },
+    ];
+    for (const { name, value } of cases) {
+      it(`renders CODE93 with ${name} ("${value}") without throwing`, () => {
+        // JsBarcode writes width/height attributes on the SVG element. jsdom
+        // doesn't always populate those, so a null result is acceptable
+        // (matches the pattern used by the other tests in this suite). The
+        // critical assertion is that the call does NOT throw — pre-fix it
+        // would throw "is not a valid input for CODE93".
+        expect(() => generateBarcodeSVGString(value, 'CODE93', 7.5, 300, 100, 10)).not.toThrow();
+      });
+    }
+  });
 });
 
 // ── generateBarcodeSVGBlob ─────────────────────────────────────────────────────

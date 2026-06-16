@@ -1,6 +1,6 @@
 import JsBarcode from 'jsbarcode';
 import bwipjs from 'bwip-js';
-import { BarcodeFormat, validateInput, normalizeForRendering, is2DBarcode, physicalPxScale } from '@/lib/barcodeUtils';
+import { BarcodeFormat, validateInput, normalizeForRendering, is2DBarcode, physicalPxScale, getJsBarcodeFormat } from '@/lib/barcodeUtils';
 
 // ── PNG pHYs DPI injection ─────────────────────────────────────────────────────
 // Canvas.toDataURL() produces PNGs without physical resolution metadata.
@@ -153,7 +153,7 @@ async function render1DToCanvas(
   const barWidth = Math.max(1, Math.round(modulePixels * scale));
 
   JsBarcode(svg, renderValue, {
-    format,
+    format: getJsBarcodeFormat(format),
     width: barWidth,
     height: height * scale,
     displayValue: false,
@@ -366,7 +366,7 @@ export function generateBarcodeSVGString(
 
   try {
     JsBarcode(svg, renderValue, {
-      format,
+      format: getJsBarcodeFormat(format),
       width: modulePixels,
       height: renderHeight,
       displayValue,

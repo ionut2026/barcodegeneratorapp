@@ -757,6 +757,23 @@ const NORMALIZE_REGISTRY: Partial<Record<BarcodeFormat, [RegExp, number]>> = {
   // data-digit length reaches the renderer, which JsBarcode handles directly.
 };
 
+// Map our internal `BarcodeFormat` value to the format string JsBarcode expects.
+//
+// Most formats map 1:1, but `CODE93` is special: JsBarcode's plain `CODE93`
+// encoder only accepts the 47-symbol alphabet (`0-9 A-Z - . space $ / + %`)
+// — passing `@`, `#`, `$`, lowercase letters, etc., causes JsBarcode to throw.
+// JsBarcode also ships `CODE93FullASCII` which uses the spec-defined paired
+// escape characters (e.g. `(+)A` for `a`, `(%)V` for `@`) to encode the full
+// 0x00–0x7F ASCII range. The on-the-wire symbol is still a Code 93 barcode,
+// and ZXing's `Code93Reader.decodeExtended()` automatically resolves the
+// escape pairs back to the original ASCII characters — so the round-trip
+// scan keeps working unchanged. We always route CODE93 through the Full ASCII
+// encoder so the UI honours the documented "All ASCII characters" capability.
+export function getJsBarcodeFormat(format: BarcodeFormat): string {
+  if (format === 'CODE93') return 'CODE93FullASCII';
+  return format;
+}
+
 // Normalize input for JsBarcode: handle UPC-E 7→8 digit conversion
 export function normalizeForRendering(text: string, format: BarcodeFormat): string {
   // Codabar: JsBarcode requires start/stop characters (A-D). If the user input

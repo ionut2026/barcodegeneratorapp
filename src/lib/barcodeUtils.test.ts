@@ -27,6 +27,7 @@ import {
   calculateGS1Mod10,
   clampBwipTextsize,
   BWIP_MAX_TEXTSIZE,
+  getJsBarcodeFormat,
 } from './barcodeUtils';
 
 // ---------------------------------------------------------------------------
@@ -426,6 +427,28 @@ describe('normalizeForRendering', () => {
 
   it('CODE39 → unchanged regardless of content', () => {
     expect(normalizeForRendering('HELLO-123', 'CODE39')).toBe('HELLO-123');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getJsBarcodeFormat
+// ---------------------------------------------------------------------------
+describe('getJsBarcodeFormat', () => {
+  it('maps CODE93 → CODE93FullASCII so JsBarcode accepts the full ASCII range', () => {
+    // The default `CODE93` encoder in jsbarcode rejects lowercase letters and
+    // symbols like @ # $ — Full ASCII is required to match the UI's
+    // documented "All ASCII characters" capability.
+    expect(getJsBarcodeFormat('CODE93')).toBe('CODE93FullASCII');
+  });
+
+  it('passes other formats through unchanged', () => {
+    expect(getJsBarcodeFormat('CODE39')).toBe('CODE39');
+    expect(getJsBarcodeFormat('CODE128')).toBe('CODE128');
+    expect(getJsBarcodeFormat('EAN13')).toBe('EAN13');
+    expect(getJsBarcodeFormat('UPC')).toBe('UPC');
+    expect(getJsBarcodeFormat('ITF14')).toBe('ITF14');
+    expect(getJsBarcodeFormat('codabar')).toBe('codabar');
+    expect(getJsBarcodeFormat('MSI10')).toBe('MSI10');
   });
 });
 
