@@ -217,6 +217,24 @@ export function applyIntrinsicChecksum(text: string, format: BarcodeFormat): str
     }
     case 'ITF14':
       return text.length === 13 ? text + calculateGS1Mod10(text) : text;
+    // MSI variants: JsBarcode auto-appends check digits in the bars (see
+    // jsbarcode/src/barcodes/MSI/*.js). We must mirror that here so the display
+    // label matches the encoded data. `calculateMod10` (Luhn) and
+    // `calculateMod11` are bit-equivalent to JsBarcode's MSI checksums.
+    case 'MSI10':
+      return text + calculateMod10(text);
+    case 'MSI11':
+      // JsBarcode's mod11 can return 10 ("two digits"); concatenating preserves
+      // bar/label parity even in that edge case.
+      return text + calculateMod11(text);
+    case 'MSI1010': {
+      const cd1 = text + calculateMod10(text);
+      return cd1 + calculateMod10(cd1);
+    }
+    case 'MSI1110': {
+      const cd1 = text + calculateMod11(text);
+      return cd1 + calculateMod10(cd1);
+    }
     default:
       return text;
   }
@@ -244,6 +262,27 @@ export function getFixedLength(format: BarcodeFormat): number | null {
     case 'EAN2':  return 2;
     default:      return null;
   }
+}
+
+// ── Charset classification ────────────────────────────────────────────────────
+// Single source of truth for "this symbology only encodes digits 0-9". Used by
+// the batch random-value generator (so it never emits alphabetic characters for
+// a numeric format) and by any other caller that needs the charset. Adding a new
+// numeric symbology requires updating ONLY this set — the previous bug was a
+// hardcoded list duplicated in BatchGenerator that silently omitted the
+// MSI1010 / MSI1110 variants, causing random alphanumeric values that failed
+// digits-only validation.
+//
+// Codabar is intentionally excluded: it permits digits PLUS a small set of
+// symbols (- $ : / . +), and the generator handles it via a dedicated path.
+const NUMERIC_ONLY_FORMATS: ReadonlySet<BarcodeFormat> = new Set<BarcodeFormat>([
+  'EAN13', 'EAN8', 'EAN5', 'EAN2', 'UPC', 'UPCE', 'ITF14', 'ITF',
+  'MSI', 'MSI10', 'MSI11', 'MSI1010', 'MSI1110', 'pharmacode',
+]);
+
+/** True when `format` encodes only digits 0-9 (excludes codabar's symbols). */
+export function isNumericOnlyFormat(format: BarcodeFormat): boolean {
+  return NUMERIC_ONLY_FORMATS.has(format);
 }
 
 export const BARCODE_FORMATS: { value: BarcodeFormat; label: string; description: string; validChars: string; lengthHint: string; category: '1D' | '2D' }[] = [

@@ -1,38 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { validateInput, getFixedLength } from '@/lib/barcodeUtils';
-
-// Inline copy of generateRandomForFormat for isolated testing.
-// Once BatchGenerator exports this helper, import it directly.
-function generateRandomForFormat(format: string, count: number, stringLength: number): string[] {
-  const isNumericOnly = [
-    'EAN13', 'EAN8', 'EAN5', 'EAN2', 'UPC', 'UPCE', 'ITF14', 'ITF',
-    'MSI', 'MSI10', 'MSI11', 'pharmacode', 'codabar',
-  ].includes(format);
-
-  const fixed = getFixedLength(format as any);
-  let length = fixed ?? stringLength;
-  if (format === 'ITF' && length % 2 !== 0) length = Math.max(2, length - 1);
-
-  if (format === 'pharmacode') {
-    return Array.from({ length: count }, () => String(Math.floor(Math.random() * 131068) + 3));
-  }
-
-  if (format === 'codabar') {
-    const dataChars = '0123456789-$:/.+';
-    return Array.from({ length: count }, () => {
-      let val = '';
-      for (let i = 0; i < length; i++) val += dataChars.charAt(Math.floor(Math.random() * dataChars.length));
-      return val;
-    });
-  }
-
-  const chars = isNumericOnly ? '0123456789' : '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-  return Array.from({ length: count }, () => {
-    let r = '';
-    for (let i = 0; i < length; i++) r += chars.charAt(Math.floor(Math.random() * chars.length));
-    return r;
-  });
-}
+import { validateInput, BARCODE_FORMATS, BarcodeFormat } from '@/lib/barcodeUtils';
+// Import the REAL generator (not an inline copy) so the test can never drift
+// out of sync with production behaviour — the previous inline duplicate is
+// exactly what let the MSI1010 / MSI1110 alphanumeric bug slip through.
+import { generateRandomForFormat, computeBatchValidationMessage } from './BatchGenerator';
 
 describe('generateRandomForFormat — UPCE regression (isNumericOnly)', () => {
   it('UPCE generates only digit-only strings', () => {
@@ -110,5 +81,124 @@ describe('generateRandomForFormat — fixed-length formats', () => {
   });
 });
 
-// Silence unused import warning — validateInput is available for future tests
-void validateInput;
+describe('generateRandomForFormat — numeric symbologies only emit digits', () => {
+  // Regression for the reported bug: MSI Double Mod 10 (MSI1010) and
+  // MSI Mod 11 + Mod 10 (MSI1110) generated alphanumeric values that then
+  // failed digits-only validation → "No valid barcodes could be generated".
+  const numericFormats: BarcodeFormat[] = [
+    'MSI', 'MSI10', 'MSI11', 'MSI1010', 'MSI1110',
+    'EAN13', 'EAN8', 'EAN5', 'EAN2', 'UPC', 'UPCE', 'ITF14', 'ITF', 'pharmacode',
+  ];
+  for (const format of numericFormats) {
+    it(`${format} generates only digits (0-9)`, () => {
+      const values = generateRandomForFormat(format, 30, 8);
+      expect(values.length).toBe(30);
+      for (const v of values) {
+        expect(v).toMatch(/^\d+$/);
+      }
+    });
+  }
+});
+
+describe('generateRandomForFormat — generated values pass validation for every format', () => {
+  // Comprehensive guard: whatever the generator emits for a format MUST be
+  // accepted by validateInput for the same format (with the default `none`
+  // checksum, matching how the batch screen validates intrinsic-checksum
+  // formats). This catches the entire class of "generator emits values the
+  // validator rejects" bugs for all current and future symbologies.
+  for (const fmt of BARCODE_FORMATS) {
+    it(`${fmt.value}: every generated value validates`, () => {
+      const values = generateRandomForFormat(fmt.value, 25, 8);
+      expect(values.length).toBe(25);
+      for (const v of values) {
+        const result = validateInput(v, fmt.value);
+        expect(result.valid, `value "${v}" failed validation for ${fmt.value}: ${result.message}`).toBe(true);
+      }
+    });
+  }
+});
+
+describe('computeBatchValidationMessage', () => {
+  // ── Entered-values branch ────────────────────────────────────────────────
+  it('returns null when no values are entered and no proactive sample is supplied', () => {
+    expect(computeBatchValidationMessage([], 'CODE39', 'none', null)).toBeNull();
+  });
+
+  it('returns null when every entered value passes validation', () => {
+    expect(
+      computeBatchValidationMessage(['ABC123', 'HELLO'], 'CODE39', 'none', null),
+    ).toBeNull();
+  });
+
+  it('returns the first failing message when an entered value is invalid', () => {
+    // codabar + japanNW7 requires exactly 10 chars; "1234567" has 7
+    const msg = computeBatchValidationMessage(['1234567'], 'codabar', 'japanNW7', null);
+    expect(msg).toBe('Codabar + Japan NW-7 (JIS X 0503) requires exactly 10 characters');
+  });
+
+  it('returns the failing message from the first invalid value, ignoring later valid ones', () => {
+    const msg = computeBatchValidationMessage(
+      ['12345678', '1234567890'],
+      'codabar',
+      'mod16Japan',
+      null,
+    );
+    expect(msg).toBe('Codabar + Modulo 16 Japan (JIS X 0503) requires exactly 10 characters');
+  });
+
+  it('codabar + japanNW7 with exactly-10-char entered values returns null', () => {
+    expect(
+      computeBatchValidationMessage(['1234567890', '9876543210'], 'codabar', 'japanNW7', null),
+    ).toBeNull();
+  });
+
+  it('codabar + mod16Japan with exactly-10-char entered values returns null', () => {
+    expect(
+      computeBatchValidationMessage(['1234567890', '9876543210'], 'codabar', 'mod16Japan', null),
+    ).toBeNull();
+  });
+
+  // ── Proactive (empty textarea) branch ───────────────────────────────────
+  it('warns proactively when codabar + japanNW7 random sample is the wrong length', () => {
+    // Default String Length = 8 → random codabar sample is 8 chars → invalid for japanNW7
+    const msg = computeBatchValidationMessage([], 'codabar', 'japanNW7', '12345678');
+    expect(msg).toBe('Codabar + Japan NW-7 (JIS X 0503) requires exactly 10 characters');
+  });
+
+  it('warns proactively when codabar + mod16Japan random sample is the wrong length', () => {
+    const msg = computeBatchValidationMessage([], 'codabar', 'mod16Japan', '12345678');
+    expect(msg).toBe('Codabar + Modulo 16 Japan (JIS X 0503) requires exactly 10 characters');
+  });
+
+  it('no proactive warning when sample length matches japanNW7/mod16Japan requirement', () => {
+    expect(computeBatchValidationMessage([], 'codabar', 'japanNW7', '1234567890')).toBeNull();
+    expect(computeBatchValidationMessage([], 'codabar', 'mod16Japan', '1234567890')).toBeNull();
+  });
+
+  it('no proactive warning for formats without active length constraints (CODE39, none)', () => {
+    expect(computeBatchValidationMessage([], 'CODE39', 'none', 'ABC123XY')).toBeNull();
+  });
+
+  it('no proactive warning when sample is null (empty textarea, generator unavailable)', () => {
+    expect(computeBatchValidationMessage([], 'codabar', 'japanNW7', null)).toBeNull();
+  });
+
+  // ── Integration: the real random generator + helper, end-to-end ──────────
+  it('end-to-end: default String Length 8 on codabar + japanNW7 produces a length warning', () => {
+    const [sample] = generateRandomForFormat('codabar', 1, 8);
+    const msg = computeBatchValidationMessage([], 'codabar', 'japanNW7', sample);
+    expect(msg).toBe('Codabar + Japan NW-7 (JIS X 0503) requires exactly 10 characters');
+  });
+
+  it('end-to-end: String Length 10 on codabar + japanNW7 clears the warning', () => {
+    const [sample] = generateRandomForFormat('codabar', 1, 10);
+    const msg = computeBatchValidationMessage([], 'codabar', 'japanNW7', sample);
+    expect(msg).toBeNull();
+  });
+
+  it('end-to-end: String Length 10 on codabar + mod16Japan clears the warning', () => {
+    const [sample] = generateRandomForFormat('codabar', 1, 10);
+    const msg = computeBatchValidationMessage([], 'codabar', 'mod16Japan', sample);
+    expect(msg).toBeNull();
+  });
+});

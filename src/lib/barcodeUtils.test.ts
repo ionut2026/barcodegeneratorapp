@@ -21,6 +21,7 @@ import {
   applyIntrinsicChecksum,
   getDisplayValue,
   getFixedLength,
+  isNumericOnlyFormat,
   is2DBarcode,
   getDefaultConfig,
   getApplicableChecksums,
@@ -1122,6 +1123,53 @@ describe('applyIntrinsicChecksum', () => {
     expect(applyIntrinsicChecksum('12345', 'EAN5')).toBe('12345');
     expect(applyIntrinsicChecksum('12', 'EAN2')).toBe('12');
   });
+  it('MSI10 → appends Mod 10 (Luhn) check digit', () => {
+    // "12345" → JsBarcode MSI mod10 = 5
+    expect(applyIntrinsicChecksum('12345', 'MSI10')).toBe('123455');
+    // "1234567" → known JsBarcode result
+    const r = applyIntrinsicChecksum('1234567', 'MSI10');
+    expect(r).toHaveLength(8);
+    expect(r.startsWith('1234567')).toBe(true);
+    expect(/^\d$/.test(r.slice(-1))).toBe(true);
+  });
+  it('MSI11 → appends Mod 11 check digit', () => {
+    // "1234567" → JsBarcode MSI mod11: weights[2,3,4,5,6,7] applied right-to-left
+    //  7*2 + 6*3 + 5*4 + 4*5 + 3*6 + 2*7 + 1*2 = 14+18+20+20+18+14+2 = 106
+    //  (11 - 106%11) % 11 = (11 - 7) % 11 = 4
+    expect(applyIntrinsicChecksum('1234567', 'MSI11')).toBe('12345674');
+  });
+  it('MSI1010 → appends two Mod 10 check digits chained', () => {
+    // "1234567" → first cd = mod10("1234567")
+    //   Luhn doubling from right: 7,2*6=12→1+2=3,5,2*4=8,3,2*2=4,1 → sum=7+3+5+8+3+4+1=31 → cd=(10-31%10)%10=9
+    //   Wait let me re-check: digits reversed = [7,6,5,4,3,2,1]; isOdd starts true
+    //   i=6 (digit 7): isOdd=true → 14, 14>9 → 5; sum=5
+    //   i=5 (digit 6): isOdd=false → sum+=6 → 11
+    //   i=4 (digit 5): isOdd=true → 10, 10>9 → 1; sum=12
+    //   i=3 (digit 4): isOdd=false → sum+=4 → 16
+    //   i=2 (digit 3): isOdd=true → 6; sum=22
+    //   i=1 (digit 2): isOdd=false → sum+=2 → 24
+    //   i=0 (digit 1): isOdd=true → 2; sum=26
+    //   cd = (10-26%10)%10 = (10-6)%10 = 4
+    // Then mod10("12345674") for the second cd...
+    const r = applyIntrinsicChecksum('1234567', 'MSI1010');
+    expect(r).toHaveLength(9);
+    expect(r.startsWith('1234567')).toBe(true);
+    // First check digit is 4 (computed above); second is mod10 of "12345674"
+    expect(r[7]).toBe('4');
+  });
+  it('MSI1110 → appends Mod 11 then Mod 10 check digit chained', () => {
+    // "1234567" → mod11 cd = 4 (computed in MSI11 test); then mod10("12345674")
+    const r = applyIntrinsicChecksum('1234567', 'MSI1110');
+    expect(r).toHaveLength(9);
+    expect(r.startsWith('12345674')).toBe(true); // Mod11 appends '4'
+    expect(/^\d$/.test(r[8])).toBe(true);
+  });
+  it('MSI10/MSI11/MSI1010/MSI1110 with non-numeric input → unchanged', () => {
+    // applyIntrinsicChecksum bails out early via /^\d+$/ test
+    expect(applyIntrinsicChecksum('ABC', 'MSI10')).toBe('ABC');
+    expect(applyIntrinsicChecksum('12A', 'MSI11')).toBe('12A');
+    expect(applyIntrinsicChecksum('', 'MSI1010')).toBe('');
+  });
   it('empty string → unchanged', () => {
     expect(applyIntrinsicChecksum('', 'EAN13')).toBe('');
   });
@@ -1168,6 +1216,36 @@ describe('getFixedLength', () => {
     expect(getFixedLength('azteccode')).toBeNull();
     expect(getFixedLength('datamatrix')).toBeNull();
     expect(getFixedLength('pdf417')).toBeNull();
+  });
+});
+
+describe('isNumericOnlyFormat', () => {
+  it('returns true for all digits-only symbologies', () => {
+    for (const f of ['EAN13', 'EAN8', 'EAN5', 'EAN2', 'UPC', 'UPCE', 'ITF14', 'ITF', 'MSI', 'MSI10', 'MSI11', 'MSI1010', 'MSI1110', 'pharmacode'] as const) {
+      expect(isNumericOnlyFormat(f), `${f} should be numeric-only`).toBe(true);
+    }
+  });
+
+  it('returns true for the MSI double/combined variants (regression for batch random-gen bug)', () => {
+    expect(isNumericOnlyFormat('MSI1010')).toBe(true);
+    expect(isNumericOnlyFormat('MSI1110')).toBe(true);
+  });
+
+  it('returns false for codabar (allows digits plus - $ : / . +)', () => {
+    expect(isNumericOnlyFormat('codabar')).toBe(false);
+  });
+
+  it('returns false for alphanumeric 1D formats', () => {
+    expect(isNumericOnlyFormat('CODE39')).toBe(false);
+    expect(isNumericOnlyFormat('CODE93')).toBe(false);
+    expect(isNumericOnlyFormat('CODE128')).toBe(false);
+  });
+
+  it('returns false for 2D formats', () => {
+    expect(isNumericOnlyFormat('qrcode')).toBe(false);
+    expect(isNumericOnlyFormat('azteccode')).toBe(false);
+    expect(isNumericOnlyFormat('datamatrix')).toBe(false);
+    expect(isNumericOnlyFormat('pdf417')).toBe(false);
   });
 });
 

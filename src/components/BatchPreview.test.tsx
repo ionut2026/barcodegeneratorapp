@@ -151,5 +151,39 @@ describe('BatchPreview - Output Size preview scaling', () => {
     const el = container.querySelector('img[alt="L"]') as HTMLImageElement | null;
     expect(el?.style.height).toBe('auto');
   });
+
+  // Regression for: "EAN-2 height too big compared to other symbologies". A
+  // narrow tall barcode (aspect > 1) at a fixed preview width would render as a
+  // tower (e.g. aspect 2.0 → 240px tall vs ~60px for EAN-13). The height is now
+  // capped at PREVIEW_MAX_HEIGHT_RATIO (1×) the preview width, and the width is
+  // shrunk proportionally so the aspect ratio is preserved (no distortion).
+  it('caps a tall narrow barcode height and shrinks width to preserve aspect', async () => {
+    const { render } = await import('@testing-library/react');
+    const { BatchPreview } = await import('./BatchPreview');
+    const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+    // aspect 2.0 (height/width) → ideal height 240px at width 120, exceeds cap.
+    const img: BarcodeImageResult = { value: 'EAN2', dataUrl: png, width: 22, height: 44, widthMm: 5, heightMm: 10, displayAspectRatio: 2 };
+    const { container } = render(
+      <BatchPreview images={[img]} isGenerating={false} actionsDisabled={false} previewScale={1} />
+    );
+    const el = container.querySelector('img[alt="EAN2"]') as HTMLImageElement | null;
+    // Height capped at previewWidth (120) × 1; width = 120/2 = 60 to hold aspect.
+    expect(el?.style.height).toBe('120px');
+    expect(el?.style.width).toBe('60px');
+  });
+
+  it('does not enlarge a normal wide barcode (aspect < 1 stays at full preview width)', async () => {
+    const { render } = await import('@testing-library/react');
+    const { BatchPreview } = await import('./BatchPreview');
+    const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+    // aspect 0.5 (typical 1D barcode) → height 60px, no cap applied.
+    const img: BarcodeImageResult = { value: 'WIDE', dataUrl: png, width: 100, height: 50, widthMm: 10, heightMm: 5, displayAspectRatio: 0.5 };
+    const { container } = render(
+      <BatchPreview images={[img]} isGenerating={false} actionsDisabled={false} previewScale={1} />
+    );
+    const el = container.querySelector('img[alt="WIDE"]') as HTMLImageElement | null;
+    expect(el?.style.width).toBe('120px');
+    expect(el?.style.height).toBe('60px');
+  });
 });
 

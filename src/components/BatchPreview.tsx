@@ -34,24 +34,47 @@ interface BatchPreviewProps {
  */
 const PREVIEW_BASE_PX = 120;
 
+/**
+ * Maximum thumbnail height expressed as a multiple of `previewWidthPx`.
+ * Narrow-but-tall barcodes (e.g. EAN-2 has only ~22 modules vs EAN-13's 95) end
+ * up with a bitmap aspect ratio > 1 (taller than wide), which at a fixed preview
+ * width produces a "tower" thumbnail roughly 3× the height of an EAN-13 one.
+ * Capping the height at 1× the preview width — and shrinking the whole thumbnail
+ * proportionally (preserving aspect, no distortion) when it would exceed that —
+ * keeps the grid visually balanced. The exported artwork is unaffected and
+ * remains spec-correct (EAN supplements share bar height with the parent code).
+ */
+const PREVIEW_MAX_HEIGHT_RATIO = 1;
+
 export function BatchPreview({ images, onCustomPrint, onDownloadZip, onExportPDF, isGenerating, actionsDisabled, dpi = 300, previewScale = 1 }: BatchPreviewProps) {
   const btnDisabled = isGenerating || actionsDisabled;
   const [customPrintOpen, setCustomPrintOpen] = useState(false);
   const previewWidthPx = Math.max(1, Math.round(PREVIEW_BASE_PX * previewScale));
-  // Per-image style: width is fixed by Output Size; height is derived from the
+  // Per-image style: width defaults to Output Size; height is derived from the
   // image's `displayAspectRatio` (computed DPI-invariantly in the renderer) so
   // that toggling 96/300/600 DPI does NOT visibly resize the thumbnail. Falls
-  // back to `height: auto` for older images that pre-date the field.
+  // back to `height: auto` for older images that pre-date the field. When the
+  // derived height would exceed the cap (narrow tall barcodes like EAN-2 /
+  // pharmacode), the thumbnail is shrunk proportionally — width is reduced to
+  // hold the same aspect ratio — so it no longer towers over the grid.
   const makePreviewImgStyle = (img: BarcodeImageResult): CSSProperties => {
     const aspect = img.displayAspectRatio;
+    const maxHeightPx = Math.max(1, Math.round(previewWidthPx * PREVIEW_MAX_HEIGHT_RATIO));
     const style: CSSProperties = {
-      width: `${previewWidthPx}px`,
       maxWidth: '100%',
       imageRendering: 'pixelated',
     };
     if (typeof aspect === 'number' && isFinite(aspect) && aspect > 0) {
-      style.height = `${Math.max(1, Math.round(previewWidthPx * aspect))}px`;
+      let width = previewWidthPx;
+      let height = previewWidthPx * aspect;
+      if (height > maxHeightPx) {
+        height = maxHeightPx;
+        width = Math.max(1, Math.round(maxHeightPx / aspect));
+      }
+      style.width = `${Math.round(width)}px`;
+      style.height = `${Math.round(height)}px`;
     } else {
+      style.width = `${previewWidthPx}px`;
       style.height = 'auto';
     }
     return style;

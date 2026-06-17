@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { BarcodeFormat, BARCODE_FORMATS, ChecksumType, getApplicableChecksums, applyChecksum, snapToPixelGrid, getDefaultConfig, is2DBarcode, validateInput, getDisplayValue, getFixedLength, BASE_DPI } from '@/lib/barcodeUtils';
-import { generateBarcodeImage, generateBarcodeBlob, generateBarcodeSVGBlob, BarcodeImageResult } from '@/lib/barcodeImageGenerator';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { BarcodeFormat, BARCODE_FORMATS, ChecksumType, getApplicableChecksums, applyChecksum, snapToPixelGrid, getDefaultConfig, validateInput, getDisplayValue, getFixedLength, isNumericOnlyFormat, BASE_DPI } from '@/lib/barcodeUtils';
+import { generateBarcodeImage, generateBarcodeBlob, BarcodeImageResult } from '@/lib/barcodeImageGenerator';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -53,7 +53,7 @@ function getChecksumLabel(format: BarcodeFormat, checksumType: ChecksumType): st
   return checksums.find(c => c.value === checksumType)?.label ?? checksumType;
 }
 
-function generateRandomString(length: number, numeric: boolean): string {
+export function generateRandomString(length: number, numeric: boolean): string {
   const chars = numeric ? '0123456789' : '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
   let result = '';
   for (let i = 0; i < length; i++) {
@@ -62,8 +62,11 @@ function generateRandomString(length: number, numeric: boolean): string {
   return result;
 }
 
-function generateRandomForFormat(format: BarcodeFormat, count: number, stringLength: number): string[] {
-  const isNumericOnly = ['EAN13', 'EAN8', 'EAN5', 'EAN2', 'UPC', 'UPCE', 'ITF14', 'ITF', 'MSI', 'MSI10', 'MSI11', 'pharmacode', 'codabar'].includes(format);
+export function generateRandomForFormat(format: BarcodeFormat, count: number, stringLength: number): string[] {
+  // Charset is derived from the single source of truth in barcodeUtils so a new
+  // numeric symbology can never silently fall through to alphanumeric output
+  // (the original MSI1010 / MSI1110 bug).
+  const isNumericOnly = isNumericOnlyFormat(format);
 
   // Honour fixed-length formats — getFixedLength is the single source of truth
   // so EAN-5/EAN-2/etc. don't fall through to the user-driven stringLength.
@@ -99,6 +102,48 @@ function generateRandomForFormat(format: BarcodeFormat, count: number, stringLen
   return Array.from({ length: count }, () => generateRandomString(length, isNumericOnly));
 }
 
+/**
+ * Compute the validation warning to display below the Batch screen's
+ * "Enter barcode values" textarea. Returns null when there is nothing to warn
+ * about.
+ *
+ * Behaviour:
+ *   1. If the user has entered values, returns the first validation failure
+ *      message for the active format + checksum, so they know why those
+ *      values will be skipped when they click "Add to Batch" (otherwise the
+ *      only feedback is a generic "No valid barcodes could be generated"
+ *      toast after the fact).
+ *   2. If the textarea is empty, validates a sample value the random
+ *      generator would emit so checksum-driven preconditions surface BEFORE
+ *      the user clicks "Generate Random Values". Concrete example: Codabar
+ *      + Japan NW-7 (JIS X 0503) and Codabar + Modulo 16 Japan both require
+ *      exactly 10 characters, but the default String Length is 8 — without
+ *      this proactive check the user generates 10 random values, clicks Add
+ *      to Batch, and gets a silent "no valid barcodes" with no hint as to
+ *      what's wrong.
+ *
+ * `sampleValueForRandom` is passed in (rather than computed from
+ * generateRandomForFormat inside this function) so the helper stays pure and
+ * deterministic for unit tests.
+ */
+export function computeBatchValidationMessage(
+  enteredValues: string[],
+  format: BarcodeFormat,
+  checksumType: ChecksumType,
+  sampleValueForRandom: string | null,
+): string | null {
+  if (enteredValues.length > 0) {
+    for (const v of enteredValues) {
+      const res = validateInput(v, format, checksumType);
+      if (!res.valid) return res.message;
+    }
+    return null;
+  }
+  if (!sampleValueForRandom) return null;
+  const res = validateInput(sampleValueForRandom, format, checksumType);
+  return res.valid ? null : res.message;
+}
+
 const formats1D = BARCODE_FORMATS.filter(f => f.category === '1D');
 const formats2D = BARCODE_FORMATS.filter(f => f.category === '2D');
 
@@ -107,8 +152,47 @@ export function BatchGenerator({ onImagesGenerated, onActionsReady }: BatchGener
   const [format, setFormat] = useState<BarcodeFormat>('CODE39');
   const [checksumType, setChecksumType] = useState<ChecksumType>('none');
   const [values, setValues] = useState('');
-  const [count, setCount] = useState(10);
-  const [stringLength, setStringLength] = useState(8);
+  // Count / String Length inputs are kept as strings so they can be empty while
+  // the user is editing (previous numeric state with `|| 1` / `|| 8` fallback
+  // snapped the field back to the default the moment the user cleared it).
+  // Defaults (10 / 8) are applied lazily — when the input is empty/invalid
+  // the derived numeric value below falls back to them.
+  const [countInput, setCountInput] = useState('10');
+  const [stringLengthInput, setStringLengthInput] = useState('8');
+
+  // Derived numeric values with sane fallbacks + clamp. Used everywhere the
+  // app actually needs a number (random generation, Generate button label).
+  const parseClamped = (s: string, min: number, max: number, fallback: number): number => {
+    const n = parseInt(s, 10);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.max(min, Math.min(max, n));
+  };
+  const count = parseClamped(countInput, 1, 1000, 10);
+  const stringLength = parseClamped(stringLengthInput, 1, 100, 8);
+
+  // Inline validation message shown below the textarea. Covers two real
+  // scenarios:
+  //   • Manual entry — surfaces the first failing value's message so the user
+  //     doesn't have to guess why some values are skipped.
+  //   • Random generation — when the textarea is empty we dry-run a sample of
+  //     what the random generator would produce so checksum-driven length
+  //     constraints (e.g. codabar + Japan NW-7 / Modulo 16 Japan = 10 chars)
+  //     surface BEFORE the user clicks Generate Random Values.
+  // Recomputes only when the inputs that affect validation actually change.
+  const batchValidationMessage = useMemo<string | null>(() => {
+    const enteredValues = values.split('\n').map(v => v.trim()).filter(v => v);
+    let sample: string | null = null;
+    if (enteredValues.length === 0) {
+      try {
+        // Use the production random generator so what we validate matches
+        // exactly what the "Generate Random Values" button would emit.
+        sample = generateRandomForFormat(format, 1, stringLength)[0] ?? null;
+      } catch {
+        sample = null;
+      }
+    }
+    return computeBatchValidationMessage(enteredValues, format, checksumType, sample);
+  }, [values, format, checksumType, stringLength]);
 
   // Committed batches (persistent)
   const [batches, setBatches] = useState<CommittedBatch[]>([]);
@@ -157,7 +241,7 @@ export function BatchGenerator({ onImagesGenerated, onActionsReady }: BatchGener
   // variable-length formats the existing user value is preserved.
   useEffect(() => {
     const fixed = getFixedLength(format);
-    if (fixed !== null) setStringLength(fixed);
+    if (fixed !== null) setStringLengthInput(String(fixed));
   }, [format]);
 
   // Notify parent whenever committed batches change
@@ -351,6 +435,17 @@ export function BatchGenerator({ onImagesGenerated, onActionsReady }: BatchGener
       const totalItems = batches.reduce((sum, b) => sum + b.values.length, 0);
       let processed = 0;
 
+      // Bump effective render DPI so the rasterised PNG is "SVG-quality" —
+      // crisp bars even at small physical sizes. `scale` in generateBarcodeImage
+      // multiplies pixel density without changing the embedded physical mm
+      // (pHYs chunk tracks dpi × scale), so any viewer/printer still renders
+      // the barcode at the user-configured physical width. We target a minimum
+      // 1200 DPI effective render, which is 4× the default 300 DPI — at the
+      // default 7.5 mil X-dim that's ~9 pixels per bar (vs. 2 at 300 DPI),
+      // matching what rasterising the SVG at print resolution would produce.
+      const TARGET_EXPORT_DPI = 1200;
+      const exportScale = Math.max(scale, TARGET_EXPORT_DPI / dpi);
+
       for (const batch of batches) {
         const folderName = multiFormat
           ? `${batch.format}${batch.checksumType !== 'none' ? `_${batch.checksumType}` : ''}`
@@ -361,18 +456,16 @@ export function BatchGenerator({ onImagesGenerated, onActionsReady }: BatchGener
           if (!validateInput(val, batch.format, batch.checksumType).valid) continue;
           const processedVal = applyChecksum(val, batch.format, batch.checksumType);
           // File name uses the full display value (incl. intrinsic check digit)
-          // so an EAN-13 input "123456789012" is saved as "1234567890128.svg",
+          // so an EAN-13 input "123456789012" is saved as "1234567890128.png",
           // matching the bars and the on-screen preview label.
           const fileName = getDisplayValue(val, batch.format, batch.checksumType);
-          // 1D barcodes: export as SVG (vector, physical mm dimensions embedded).
-          // 2D barcodes: export as PNG (bwip-js renders to canvas, no SVG output).
-          if (!is2DBarcode(batch.format)) {
-            const svgBlob = generateBarcodeSVGBlob(processedVal, batch.format, widthMils, dpi, height, 0);
-            if (svgBlob) folder.file(`${fileName}.svg`, svgBlob);
-          } else {
-            const blob = await generateBarcodeBlob(processedVal, batch.format, scale, 0, widthMils, dpi, height);
-            if (blob) folder.file(`${fileName}.png`, blob);
-          }
+          // All formats export as PNG. 1D barcodes are rendered at a high
+          // effective DPI (see exportScale above) so the rasterised bars match
+          // the crispness of an SVG render. 2D barcodes use the same scale
+          // path — bwip-js renders modules pixel-perfectly so higher scale
+          // simply means more pixels per module (no anti-aliasing introduced).
+          const blob = await generateBarcodeBlob(processedVal, batch.format, exportScale, 0, widthMils, dpi, height);
+          if (blob) folder.file(`${fileName}.png`, blob);
           processed++;
           setProgress((processed / totalItems) * 100);
         }
@@ -393,7 +486,7 @@ export function BatchGenerator({ onImagesGenerated, onActionsReady }: BatchGener
       setIsGenerating(false);
       setProgress(0);
     }
-  }, [batches, scale, widthMils, dpi]);
+  }, [batches, scale, widthMils, dpi, height]);
 
   const exportAsPDF = useCallback(async () => {
     const allImages = batches.flatMap(b => b.images);
@@ -610,8 +703,19 @@ export function BatchGenerator({ onImagesGenerated, onActionsReady }: BatchGener
               <Label className="text-xs">Count</Label>
               <Input
                 type="number"
-                value={count}
-                onChange={(e) => setCount(Math.max(1, Math.min(1000, parseInt(e.target.value) || 1)))}
+                value={countInput}
+                onChange={(e) => setCountInput(e.target.value)}
+                onBlur={() => {
+                  // Fall back to the default (10) when the user leaves the
+                  // field empty or with an invalid value; otherwise echo the
+                  // clamped numeric value back so out-of-range inputs snap
+                  // to [1, 1000].
+                  if (countInput.trim() === '' || !Number.isFinite(parseInt(countInput, 10))) {
+                    setCountInput('10');
+                  } else {
+                    setCountInput(String(count));
+                  }
+                }}
                 min={1}
                 max={1000}
                 className="font-mono h-8"
@@ -621,8 +725,15 @@ export function BatchGenerator({ onImagesGenerated, onActionsReady }: BatchGener
               <Label className="text-xs">String Length</Label>
               <Input
                 type="number"
-                value={stringLength}
-                onChange={(e) => setStringLength(Math.max(1, Math.min(100, parseInt(e.target.value) || 8)))}
+                value={stringLengthInput}
+                onChange={(e) => setStringLengthInput(e.target.value)}
+                onBlur={() => {
+                  if (stringLengthInput.trim() === '' || !Number.isFinite(parseInt(stringLengthInput, 10))) {
+                    setStringLengthInput('8');
+                  } else {
+                    setStringLengthInput(String(stringLength));
+                  }
+                }}
                 min={1}
                 max={100}
                 className="font-mono h-8"
@@ -642,6 +753,11 @@ export function BatchGenerator({ onImagesGenerated, onActionsReady }: BatchGener
           placeholder="Enter barcode values, one per line..."
           className="min-h-[120px] font-mono text-sm"
         />
+        {batchValidationMessage && (
+          <p className="text-sm text-destructive bg-destructive/10 px-3 py-2 rounded-lg">
+            {batchValidationMessage}
+          </p>
+        )}
         <p className="text-xs text-muted-foreground">
           {values.split('\n').filter(v => v.trim()).length} values ready
         </p>
