@@ -569,8 +569,17 @@ describe('getDefaultConfig', () => {
 // calculateLuhnChecksum
 // ---------------------------------------------------------------------------
 describe('calculateLuhnChecksum', () => {
-  it('returns "4" for "7992739871"', () => {
-    expect(calculateLuhnChecksum('7992739871')).toBe('4');
+  it('returns "3" for "7992739871" (classic ANSI Luhn test vector → 79927398713 is valid)', () => {
+    // Right-to-left, rightmost doubled first:
+    // 1*2=2; 7; 8*2=16→7; 9; 3*2=6; 7; 2*2=4; 9; 9*2=18→9; 7
+    // sum=67, (10-7)%10=3
+    expect(calculateLuhnChecksum('7992739871')).toBe('3');
+  });
+
+  it('returns "3" for "1234567890"', () => {
+    // 0*2=0; 9; 8*2=16→7; 7; 6*2=12→3; 5; 4*2=8; 3; 2*2=4; 1
+    // sum=47, (10-7)%10=3
+    expect(calculateLuhnChecksum('1234567890')).toBe('3');
   });
 
   it('returns a string digit for "1"', () => {
@@ -580,12 +589,22 @@ describe('calculateLuhnChecksum', () => {
 });
 
 // ---------------------------------------------------------------------------
-// calculateJRCChecksum
+// calculateJRCChecksum — weighted Mod 11 (JIS-style), requires len=10
 // ---------------------------------------------------------------------------
 describe('calculateJRCChecksum', () => {
-  it('returns "4" for "1234"', () => {
-    // weights alternate 1,2: 1*1=1, 2*2=4, 3*1=3, 4*2=8 → sum=16, (10-6)%10=4
-    expect(calculateJRCChecksum('1234')).toBe('4');
+  it('returns "" for input shorter than 10 chars', () => {
+    expect(calculateJRCChecksum('1234')).toBe('');
+  });
+
+  it('returns "6" for "1234567890"', () => {
+    // weights [5,9,10,7,8,4,5,3,6,2]:
+    // 1*5+2*9+3*10+4*7+5*8+6*4+7*5+8*3+9*6+0*2 = 258
+    // 258 % 11 = 5, 11 - 5 = 6 → codabarChars[6] = "6"
+    expect(calculateJRCChecksum('1234567890')).toBe('6');
+  });
+
+  it('returns "" for non-Codabar character in input', () => {
+    expect(calculateJRCChecksum('12345678!0')).toBe('');
   });
 });
 
@@ -634,15 +653,21 @@ describe('calculateJapanNW7Checksum', () => {
 // calculateMod11PZNChecksum
 // ---------------------------------------------------------------------------
 describe('calculateMod11PZNChecksum', () => {
-  it('returns "3" for "123456"', () => {
-    // 1*1+2*2+3*3+4*4+5*5+6*6 = 1+4+9+16+25+36=91, 91%11=3
-    expect(calculateMod11PZNChecksum('123456')).toBe('3');
+  it('returns "9" for "123456"', () => {
+    // weights start at 2: 1*2+2*3+3*4+4*5+5*6+6*7 = 2+6+12+20+30+42 = 112
+    // 11 - (112 % 11) = 11 - 2 = 9 → codabarChars[9] = "9"
+    expect(calculateMod11PZNChecksum('123456')).toBe('9');
   });
 
-  it('returns "!" when remainder is 10 (invalid PZN)', () => {
-    // Need input where sum%11=10. Try "19": 1*1+9*2=19, 19%11=8 (no)
-    // Try "29": 2*1+9*2=20, 20%11=9 (no). Try "39": 3*1+9*2=21, 21%11=10 ✓
-    expect(calculateMod11PZNChecksum('39')).toBe('!');
+  it('returns "$" for "39" (checksum 11 → Codabar "$")', () => {
+    // 3*2 + 9*3 = 33, 11 - (33 % 11) = 11 → codabarChars[11] = "$"
+    expect(calculateMod11PZNChecksum('39')).toBe('$');
+  });
+
+  it('returns "$" for "1234567890" (checksum 11 → Codabar "$")', () => {
+    // 1*2+2*3+3*4+4*5+5*6+6*7+7*8+8*9+9*10+0*11 = 330
+    // 11 - (330 % 11) = 11 - 0 = 11 → codabarChars[11] = "$"
+    expect(calculateMod11PZNChecksum('1234567890')).toBe('$');
   });
 });
 
@@ -660,9 +685,18 @@ describe('calculateMod11AChecksum', () => {
 // calculateMod10Weight2Checksum
 // ---------------------------------------------------------------------------
 describe('calculateMod10Weight2Checksum', () => {
-  it('returns "9" for "12345"', () => {
-    // weights alt 1,2: 1*1=1, 2*2=4, 3*1=3, 4*2=8, 5*1=5 → sum=21, (10-1)%10=9
-    expect(calculateMod10Weight2Checksum('12345')).toBe('9');
+  it('returns "6" for "12345" (inverted/right-to-left, weight 2 then 1)', () => {
+    // right-to-left, isOdd=true initially:
+    // i=4 val=5 → 2*5=10; i=3 val=4 → 1*4=4; i=2 val=3 → 2*3=6;
+    // i=1 val=2 → 1*2=2; i=0 val=1 → 2*1=2; sum=24, (10-4)%10=6
+    expect(calculateMod10Weight2Checksum('12345')).toBe('6');
+  });
+
+  it('returns "5" for "1234567890"', () => {
+    // right-to-left, isOdd toggles starting true:
+    // 0*2+9*1+8*2+7*1+6*2+5*1+4*2+3*1+2*2+1*1 = 0+9+16+7+12+5+8+3+4+1 = 65
+    // (10 - 65%10) % 10 = (10 - 5) % 10 = 5
+    expect(calculateMod10Weight2Checksum('1234567890')).toBe('5');
   });
 });
 
@@ -670,9 +704,16 @@ describe('calculateMod10Weight2Checksum', () => {
 // calculateMod10Weight3Checksum
 // ---------------------------------------------------------------------------
 describe('calculateMod10Weight3Checksum', () => {
-  it('returns "3" for "12345"', () => {
-    // weights alt 1,3: 1*1=1, 2*3=6, 3*1=3, 4*3=12, 5*1=5 → sum=27, (10-7)%10=3
-    expect(calculateMod10Weight3Checksum('12345')).toBe('3');
+  it('returns "7" for "12345" (left-to-right, weight 3 then 1)', () => {
+    // left-to-right, isOdd=true initially:
+    // 3*1=3; 1*2=2; 3*3=9; 1*4=4; 3*5=15; sum=33, (10-3)%10=7
+    expect(calculateMod10Weight3Checksum('12345')).toBe('7');
+  });
+
+  it('returns "5" for "1234567890"', () => {
+    // 3*1+1*2+3*3+1*4+3*5+1*6+3*7+1*8+3*9+1*0 = 3+2+9+4+15+6+21+8+27+0 = 95
+    // (10 - 95%10) % 10 = (10 - 5) % 10 = 5
+    expect(calculateMod10Weight3Checksum('1234567890')).toBe('5');
   });
 });
 

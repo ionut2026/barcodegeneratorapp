@@ -590,49 +590,80 @@ export function calculateJapanNW7Checksum(input: string): string {
   return codabarChars[check];
 }
 
-// JRC (Japanese Railway) checksum
+// JRC (Japanese Railway) checksum — weighted Mod 11 (JIS-style), requires
+// exactly 10 numeric values. JRC uses the same first/second weight tables
+// as Japan NW-7 (JIS X 0503): if the first-weight check equals 10, retry
+// with the second weights; if the result is 11 it normalises to 0;
+// if still 10 the input is indeterminate per spec and we return ''.
 export function calculateJRCChecksum(input: string): string {
-  const digits = input.replace(/\D/g, '').split('').map(Number);
-  let sum = 0;
-  
-  for (let i = 0; i < digits.length; i++) {
-    sum += digits[i] * (i % 2 === 0 ? 1 : 2);
+  const codabarChars = '0123456789-$:/.+ABCD';
+
+  const values: number[] = [];
+  for (const char of input.toUpperCase()) {
+    const index = codabarChars.indexOf(char);
+    if (index === -1) return '';
+    values.push(index);
   }
-  
-  const check = (10 - (sum % 10)) % 10;
-  return String(check);
+
+  if (values.length !== JAPAN_NW7_LENGTH) return '';
+
+  let firstSum = 0;
+  for (let i = 0; i < JAPAN_NW7_LENGTH; i++) firstSum += values[i] * JAPAN_NW7_FIRST_WEIGHT[i];
+  let check = 11 - (firstSum % 11);
+
+  if (check === 10) {
+    let secondSum = 0;
+    for (let i = 0; i < JAPAN_NW7_LENGTH; i++) secondSum += values[i] * JAPAN_NW7_SECOND_WEIGHT[i];
+    check = 11 - (secondSum % 11);
+  }
+
+  if (check === 11) check = 0;
+  if (check === 10) return ''; // indeterminate per spec
+
+  return codabarChars[check];
 }
 
-// Luhn algorithm (same as standard credit card check)
+// Luhn algorithm (same as standard credit card check / ANSI X4.13).
+// Iterates digits right-to-left; the rightmost digit is doubled first, then
+// alternation toggles each step. Digits whose doubled product exceeds 9 have
+// 9 subtracted. The final check digit is (10 - sum%10) % 10.
 export function calculateLuhnChecksum(input: string): string {
   const digits = input.replace(/\D/g, '').split('').map(Number);
   let sum = 0;
-  
+  let doDouble = true;
+
   for (let i = digits.length - 1; i >= 0; i--) {
     let digit = digits[i];
-    if ((digits.length - i) % 2 === 0) {
+    if (doDouble) {
       digit *= 2;
       if (digit > 9) digit -= 9;
     }
     sum += digit;
+    doDouble = !doDouble;
   }
-  
+
   const check = (10 - (sum % 10)) % 10;
   return String(check);
 }
 
 // Modulo 11 PZN (Pharmazentralnummer) checksum
+// Returns the Codabar character representation of the check value.
+// Algorithm: weights start at 2 and increment by 1 per digit (left-to-right);
+// check = (11 - sum % 11). The integer result (range 1..11) is then mapped
+// to the Codabar character set so values >9 encode as '-' (10) or '$' (11).
 export function calculateMod11PZNChecksum(input: string): string {
   const digits = input.replace(/\D/g, '').split('').map(Number);
   let sum = 0;
-  
-  for (let i = 0; i < digits.length; i++) {
-    sum += digits[i] * (i + 1);
+  let weight = 2;
+
+  for (const val of digits) {
+    sum += val * weight;
+    weight += 1;
   }
-  
-  const check = sum % 11;
-  if (check === 10) return '!'; // PZN spec: remainder 10 = invalid PZN, no valid check digit exists
-  return String(check);
+
+  const checksum = 11 - (sum % 11);
+  const codabarChars = '0123456789-$:/.+';
+  return codabarChars[checksum];
 }
 
 // Modulo 11-A checksum (AIM/USS Codabar Mod 11 variant).
@@ -656,32 +687,34 @@ export function calculateMod11AChecksum(input: string): string {
   return check === 10 ? '0' : String(check);
 }
 
-// Modulo 10 with weight 2 (alternating 1,2)
+// Modulo 10 with weight 2 (INVERTED / right-to-left).
+// Iterates digits from right to left starting with weight 2 alternating with 1.
 export function calculateMod10Weight2Checksum(input: string): string {
   const digits = input.replace(/\D/g, '').split('').map(Number);
   let sum = 0;
-  
-  for (let i = 0; i < digits.length; i++) {
-    const weight = i % 2 === 0 ? 1 : 2;
-    let weighted = digits[i] * weight;
-    if (weighted > 9) weighted -= 9;
-    sum += weighted;
+  let isOdd = true;
+
+  for (let i = digits.length - 1; i >= 0; i--) {
+    sum += isOdd ? 2 * digits[i] : digits[i];
+    isOdd = !isOdd;
   }
-  
+
   const check = (10 - (sum % 10)) % 10;
   return String(check);
 }
 
-// Modulo 10 with weight 3 (alternating 1,3)
+// Modulo 10 with weight 3 (left-to-right).
+// Iterates digits left-to-right starting with weight 3 alternating with 1.
 export function calculateMod10Weight3Checksum(input: string): string {
   const digits = input.replace(/\D/g, '').split('').map(Number);
   let sum = 0;
-  
-  for (let i = 0; i < digits.length; i++) {
-    const weight = i % 2 === 0 ? 1 : 3;
-    sum += digits[i] * weight;
+  let isOdd = true;
+
+  for (const val of digits) {
+    sum += isOdd ? 3 * val : val;
+    isOdd = !isOdd;
   }
-  
+
   const check = (10 - (sum % 10)) % 10;
   return String(check);
 }
