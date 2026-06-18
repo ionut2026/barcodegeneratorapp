@@ -152,6 +152,26 @@ describe('computeBatchValidationMessage', () => {
     ).toBeNull();
   });
 
+  it('returns the JRC length message when an entered value is the wrong length', () => {
+    const msg = computeBatchValidationMessage(['1234567'], 'codabar', 'jrc', null);
+    expect(msg).toBe('Codabar + JRC (Japanese Railway) requires exactly 10 characters');
+  });
+
+  it('codabar + jrc with exactly-10-char entered values returns null', () => {
+    expect(
+      computeBatchValidationMessage(['1234567890', '9876543210'], 'codabar', 'jrc', null),
+    ).toBeNull();
+  });
+
+  it('warns proactively when codabar + jrc random sample is the wrong length', () => {
+    const msg = computeBatchValidationMessage([], 'codabar', 'jrc', '12345678');
+    expect(msg).toBe('Codabar + JRC (Japanese Railway) requires exactly 10 characters');
+  });
+
+  it('no proactive warning when codabar + jrc sample length is 10', () => {
+    expect(computeBatchValidationMessage([], 'codabar', 'jrc', '1234567890')).toBeNull();
+  });
+
   it('codabar + mod16Japan with exactly-10-char entered values returns null', () => {
     expect(
       computeBatchValidationMessage(['1234567890', '9876543210'], 'codabar', 'mod16Japan', null),

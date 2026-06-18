@@ -45,10 +45,11 @@ export function ChecksumCalculator({ onChecksumData }: ChecksumCalculatorProps) 
     const isNumeric = /^\d+$/.test(input);
     const cleanInput = input.toUpperCase();
 
-    // Japan NW-7 and Mod 16 Japan return '' when the spec's preconditions
+    // Japan NW-7, JRC and Mod 16 Japan return '' when the spec's preconditions
     // (10 codabar chars, all decodable) aren't met. Compute once and gate
     // applicability on a non-empty result so the row is greyed out cleanly.
     const japanNW7 = calculateJapanNW7Checksum(input);
+    const jrc = calculateJRCChecksum(input);
     const mod16Japan = calculateMod16JapanChecksum(input);
 
     const results: ChecksumResult[] = [
@@ -114,8 +115,9 @@ export function ChecksumCalculator({ onChecksumData }: ChecksumCalculatorProps) 
       },
       {
         name: 'JRC',
-        value: isNumeric ? calculateJRCChecksum(input) : '-',
-        fullValue: isNumeric ? input + calculateJRCChecksum(input) : '-',
+        value: jrc || '-',
+        fullValue: jrc ? input + jrc : '-',
+        applicable: jrc !== '',
         applicable: isNumeric,
       },
       {

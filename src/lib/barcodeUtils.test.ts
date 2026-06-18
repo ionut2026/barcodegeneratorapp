@@ -1090,6 +1090,19 @@ describe('validateInput — Codabar checksum-context rules', () => {
   it('codabar + japanNW7 with length 10 passes', () => {
     expect(validateInput('0123456789', 'codabar', 'japanNW7').valid).toBe(true);
   });
+  it('codabar + jrc with length != 10 fails', () => {
+    const r = validateInput('123456789', 'codabar', 'jrc');
+    expect(r.valid).toBe(false);
+    expect(r.message).toBe('Codabar + JRC (Japanese Railway) requires exactly 10 characters');
+  });
+  it('codabar + jrc with length > 10 fails', () => {
+    const r = validateInput('12345678901', 'codabar', 'jrc');
+    expect(r.valid).toBe(false);
+    expect(r.message).toBe('Codabar + JRC (Japanese Railway) requires exactly 10 characters');
+  });
+  it('codabar + jrc with length 10 passes', () => {
+    expect(validateInput('0123456789', 'codabar', 'jrc').valid).toBe(true);
+  });
   it('codabar + mod16Japan with length != 10 fails', () => {
     expect(validateInput('123', 'codabar', 'mod16Japan').valid).toBe(false);
   });

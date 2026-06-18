@@ -1001,6 +1001,9 @@ const VALIDATION_REGISTRY: Partial<Record<BarcodeFormat, FormatValidator>> = {
     if (checksumType === 'japanNW7' && text.length !== 10) {
       return { valid: false, message: 'Codabar + Japan NW-7 (JIS X 0503) requires exactly 10 characters' };
     }
+    if (checksumType === 'jrc' && text.length !== 10) {
+      return { valid: false, message: 'Codabar + JRC (Japanese Railway) requires exactly 10 characters' };
+    }
     if (checksumType === 'mod16Japan' && text.length !== 10) {
       return { valid: false, message: 'Codabar + Modulo 16 Japan (JIS X 0503) requires exactly 10 characters' };
     }
