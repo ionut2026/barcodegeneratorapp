@@ -130,6 +130,18 @@ describe('computeBatchValidationMessage', () => {
     ).toBeNull();
   });
 
+  it('returns null for ITF + mod10 with odd/even entered lengths', () => {
+    expect(
+      computeBatchValidationMessage(['12345', '123456'], 'ITF', 'mod10', null),
+    ).toBeNull();
+  });
+
+  it('returns null for ITF + none with odd/even entered lengths', () => {
+    expect(
+      computeBatchValidationMessage(['12345', '123456'], 'ITF', 'none', null),
+    ).toBeNull();
+  });
+
   it('returns the first failing message when an entered value is invalid', () => {
     // codabar + japanNW7 requires exactly 10 chars; "1234567" has 7
     const msg = computeBatchValidationMessage(['1234567'], 'codabar', 'japanNW7', null);
@@ -197,6 +209,11 @@ describe('computeBatchValidationMessage', () => {
 
   it('no proactive warning for formats without active length constraints (CODE39, none)', () => {
     expect(computeBatchValidationMessage([], 'CODE39', 'none', 'ABC123XY')).toBeNull();
+  });
+
+  it('no proactive warning for ITF + mod10 regardless of sample parity', () => {
+    expect(computeBatchValidationMessage([], 'ITF', 'mod10', '12345')).toBeNull();
+    expect(computeBatchValidationMessage([], 'ITF', 'mod10', '123456')).toBeNull();
   });
 
   it('no proactive warning when sample is null (empty textarea, generator unavailable)', () => {

@@ -285,8 +285,8 @@ describe('validateInput', () => {
       expect(validateInput('1234', 'ITF').valid).toBe(true);
     });
 
-    it('rejects odd-length "123"', () => {
-      expect(validateInput('123', 'ITF').valid).toBe(false);
+    it('accepts odd-length "123" (renderer auto-pads with leading zero)', () => {
+      expect(validateInput('123', 'ITF').valid).toBe(true);
     });
 
     it('rejects non-numeric even-length input', () => {
@@ -302,12 +302,12 @@ describe('validateInput', () => {
         expect(validateInput('12345', 'ITF', 'mod10').valid).toBe(true);
       });
 
-      it('rejects even-length "1234" (checksum would require silent leading-zero pad)', () => {
-        expect(validateInput('1234', 'ITF', 'mod10').valid).toBe(false);
+      it('accepts even-length "1234" (checksum + padding keeps final payload even)', () => {
+        expect(validateInput('1234', 'ITF', 'mod10').valid).toBe(true);
       });
 
-      it('rejects even-length "123456"', () => {
-        expect(validateInput('123456', 'ITF', 'mod10').valid).toBe(false);
+      it('accepts even-length "123456"', () => {
+        expect(validateInput('123456', 'ITF', 'mod10').valid).toBe(true);
       });
 
       it('rejects non-numeric input', () => {
@@ -467,6 +467,12 @@ describe('applyChecksum', () => {
     // 7 digits + pad = 8 digits (even), with leading zero
   });
 
+  it('mod10 on even-length ITF "1234567899" → computes check on raw input and then pads', () => {
+    // GS1 check digit for 1234567899 is 8; after appending (11 digits), ITF
+    // parity requires a leading zero pad -> 012345678998.
+    expect(applyChecksum('1234567899', 'ITF', 'mod10')).toBe('012345678998');
+  });
+
   it('mod10 on MSI → uses Luhn algorithm, not GS1', () => {
     // MSI Plessey Mod 10 is Luhn; '123456' Luhn check = 6
     expect(applyChecksum('123456', 'MSI', 'mod10')).toBe('1234566');
@@ -478,6 +484,14 @@ describe('applyChecksum', () => {
 
   it('none → input unchanged', () => {
     expect(applyChecksum('HELLO', 'CODE39', 'none')).toBe('HELLO');
+  });
+
+  it('none on odd-length ITF auto-pads with leading zero', () => {
+    expect(applyChecksum('123', 'ITF', 'none')).toBe('0123');
+  });
+
+  it('none on even-length ITF leaves input unchanged', () => {
+    expect(applyChecksum('1234', 'ITF', 'none')).toBe('1234');
   });
 
   it('ean13 on "590123412345" (12 digits) → appends 7', () => {

@@ -178,7 +178,14 @@ const CHECKSUM_APPLIER_REGISTRY: Record<string, ChecksumApplier> = {
 };
 
 export function applyChecksum(text: string, format: BarcodeFormat, checksumType: ChecksumType): string {
-  if (checksumType === 'none' || !text.trim()) return text;
+  if (!text.trim()) return text;
+  // Plain ITF still requires an even digit count for encoding. When checksum is
+  // disabled, normalize by prepending a leading zero for odd-length input so the
+  // Generate and Batch flows can render consistently without manual padding.
+  if (checksumType === 'none' && format === 'ITF' && /^\d+$/.test(text) && text.length % 2 !== 0) {
+    return '0' + text;
+  }
+  if (checksumType === 'none') return text;
   const applier = CHECKSUM_APPLIER_REGISTRY[checksumType];
   return applier ? applier(text, format) : text;
 }
@@ -380,7 +387,7 @@ export const BARCODE_FORMATS: { value: BarcodeFormat; label: string; description
     label: 'ITF', 
     description: 'Interleaved 2 of 5',
     validChars: '0-9 only',
-    lengthHint: 'Even number of digits',
+    lengthHint: 'Any length',
     category: '1D'
   },
   { 
@@ -971,14 +978,11 @@ const VALIDATION_REGISTRY: Partial<Record<BarcodeFormat, FormatValidator>> = {
     return null;
   },
   ITF: (text, checksumType) => {
-    if (!/^\d+$/.test(text)) return { valid: false, message: 'ITF requires an even number of digits (digits only)' };
+    if (!/^\d+$/.test(text)) return { valid: false, message: 'ITF only supports digits (0-9)' };
     if (checksumType === 'mod10') {
-      // With checksum, the check digit is appended to the input. The total must be
-      // even for ITF encoding, so the raw input must have an ODD number of digits.
-      // Even-length input would require a silent leading-zero pad which alters the data.
-      if (text.length % 2 === 0) return { valid: false, message: 'ITF with checksum requires an odd number of digits (the check digit will be appended to make it even)' };
-    } else {
-      if (text.length % 2 !== 0) return { valid: false, message: 'ITF requires an even number of digits' };
+      // Mod10 mode supports both odd/even raw lengths. applyChecksum() appends
+      // the GS1 check digit, then prepends a leading zero when needed so the
+      // final ITF payload is even-length for rendering.
     }
     return null;
   },
