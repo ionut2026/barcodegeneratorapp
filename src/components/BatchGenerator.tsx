@@ -8,6 +8,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Slider } from '@/components/ui/slider';
 import { Progress } from '@/components/ui/progress';
+import { Switch } from '@/components/ui/switch';
 import { Shuffle, Maximize2, Plus, Trash2, Package, Ruler, RotateCcw } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -30,6 +31,8 @@ export interface BatchActions {
   isGenerating: boolean;
   /** Current Output Size preset (0.5 / 1 / 2 from buttons or 0.25–4 from slider). */
   previewScale: number;
+  /** Whether the human-readable value is shown beneath each Batch Preview barcode. */
+  showBarcodeValue: boolean;
 }
 
 interface BatchGeneratorProps {
@@ -203,6 +206,7 @@ export function BatchGenerator({ onImagesGenerated, onActionsReady }: BatchGener
   const [height, setHeight] = useState(DEFAULTS.height);
   const [margin, setMargin] = useState(DEFAULTS.margin);
   const [scale, setScale] = useState(1);
+  const [showBarcodeValue, setShowBarcodeValue] = useState(true);
 
   const [isGenerating, setIsGenerating] = useState(false);
   const [isAdding, setIsAdding] = useState(false);
@@ -572,8 +576,8 @@ export function BatchGenerator({ onImagesGenerated, onActionsReady }: BatchGener
   const isDisabled = isGenerating || batches.length === 0;
 
   useEffect(() => {
-    onActionsReady?.({ downloadAsZip, exportAsPDF, isDisabled, isGenerating, previewScale: scale });
-  }, [downloadAsZip, exportAsPDF, isDisabled, isGenerating, scale]);
+    onActionsReady?.({ downloadAsZip, exportAsPDF, isDisabled, isGenerating, previewScale: scale, showBarcodeValue });
+  }, [downloadAsZip, exportAsPDF, isDisabled, isGenerating, scale, showBarcodeValue]);
 
   const totalImages = batches.reduce((sum, b) => sum + b.images.length, 0);
 
@@ -871,6 +875,18 @@ export function BatchGenerator({ onImagesGenerated, onActionsReady }: BatchGener
           max={200}
           step={5}
           className="w-full"
+        />
+      </div>
+
+      {/* Show Barcode Value */}
+      <div className="flex items-center justify-between p-4 bg-secondary/50 rounded-xl border border-border/30">
+        <Label htmlFor="batch-display-value" className="text-sm font-medium cursor-pointer">
+          Show Barcode Value
+        </Label>
+        <Switch
+          id="batch-display-value"
+          checked={showBarcodeValue}
+          onCheckedChange={setShowBarcodeValue}
         />
       </div>
 

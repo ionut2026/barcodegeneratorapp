@@ -25,6 +25,12 @@ interface BatchPreviewProps {
    * heavy nearest-neighbor downsampling of the QR pattern.
    */
   previewScale?: number;
+  /**
+   * When false, the human-readable value beneath each preview barcode is
+   * hidden. Controlled by the "Show Barcode Value" toggle on the Batch tab.
+   * Defaults to true.
+   */
+  showBarcodeValue?: boolean;
 }
 
 /**
@@ -46,7 +52,7 @@ const PREVIEW_BASE_PX = 120;
  */
 const PREVIEW_MAX_HEIGHT_RATIO = 1;
 
-export function BatchPreview({ images, onCustomPrint, onDownloadZip, onExportPDF, isGenerating, actionsDisabled, dpi = 300, previewScale = 1 }: BatchPreviewProps) {
+export function BatchPreview({ images, onCustomPrint, onDownloadZip, onExportPDF, isGenerating, actionsDisabled, dpi = 300, previewScale = 1, showBarcodeValue = true }: BatchPreviewProps) {
   const btnDisabled = isGenerating || actionsDisabled;
   const [customPrintOpen, setCustomPrintOpen] = useState(false);
   const previewWidthPx = Math.max(1, Math.round(PREVIEW_BASE_PX * previewScale));
@@ -206,9 +212,11 @@ export function BatchPreview({ images, onCustomPrint, onDownloadZip, onExportPDF
                                <Download className="h-4 w-4" />
                              </Button>
                            </div>
-                           <span className="text-xs font-mono text-foreground text-center break-all leading-tight">
-                             {img.value}
-                           </span>
+                           {showBarcodeValue && (
+                             <span className="text-xs font-mono text-foreground text-center break-all leading-tight">
+                               {img.value}
+                             </span>
+                           )}
                          </div>
                        ))}
                      </div>
@@ -239,9 +247,11 @@ export function BatchPreview({ images, onCustomPrint, onDownloadZip, onExportPDF
                           <Download className="h-4 w-4" />
                         </Button>
                       </div>
-                      <span className="text-xs font-mono text-foreground text-center break-all leading-tight">
-                        {img.value}
-                      </span>
+                      {showBarcodeValue && (
+                        <span className="text-xs font-mono text-foreground text-center break-all leading-tight">
+                          {img.value}
+                        </span>
+                      )}
                       {img.formatLabel && (
                         <span className="text-[10px] text-muted-foreground">
                           {img.checksumLabel ? `${img.formatLabel} + ${img.checksumLabel}` : img.formatLabel}

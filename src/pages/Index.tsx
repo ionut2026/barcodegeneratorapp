@@ -80,13 +80,14 @@ const Index = () => {
     }
 
     try {
+      const showValue = printFormat.showBarcodeValue !== false;
       await generatePrintPdf(
         batchImages.map(img => ({
           dataUrl: img.dataUrl,
           widthPx: img.width,
           heightPx: img.height,
           dpi: config.dpi,
-          label: img.value,
+          label: showValue ? img.value : undefined,
         })),
         printFormat,
       );
@@ -179,6 +180,7 @@ const Index = () => {
                 actionsDisabled={batchActions?.isDisabled ?? true}
                 dpi={config.dpi}
                 previewScale={batchActions?.previewScale ?? 1}
+                showBarcodeValue={batchActions?.showBarcodeValue ?? true}
               />
             ) : activeTab === 'checksum' ? (
               <ChecksumPreview

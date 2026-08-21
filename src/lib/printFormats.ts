@@ -60,6 +60,12 @@ export interface PrintFormat {
    * barcodes are centred within their cells for a given label size.
    */
   showGrid?: boolean;
+  /**
+   * When true (or undefined), the human-readable barcode value is printed
+   * (either baked into the barcode image or drawn as a text label below it).
+   * When false, no value text is printed. Defaults to true.
+   */
+  showBarcodeValue?: boolean;
 }
 
 export const PRINT_FORMAT_REGISTRY: Record<PrintFormatId, PrintFormat> = {
@@ -171,6 +177,7 @@ export function buildPrintFormat(profile: {
   sheetHorizontalOffsetMm?: number;
   // Visualization
   showGrid?: boolean;
+  showBarcodeValue?: boolean;
 }): PrintFormat {
   // Map directional offsets → internal PrintFormat fields.
   // Top offset → sheetTopMarginMm (grid vertical position).
@@ -207,6 +214,7 @@ export function buildPrintFormat(profile: {
     sheetBarcodeOffsetMm: hasDirectional ? 0 : profile.sheetBarcodeOffsetMm,
     sheetHorizontalOffsetMm: horizontalOffset,
     showGrid: profile.showGrid,
+    showBarcodeValue: profile.showBarcodeValue,
   };
 }
 

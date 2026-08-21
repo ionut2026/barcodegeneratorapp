@@ -18,7 +18,18 @@
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { rmSync, readdirSync, existsSync } from 'node:fs';
+import os from 'node:os';
+import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
+import {
+  rmSync,
+  readdirSync,
+  existsSync,
+  mkdirSync,
+  writeFileSync,
+  readFileSync,
+  renameSync,
+} from 'node:fs';
 
 const require = createRequire(import.meta.url);
 const { readBuildNumber } = require('./build-number.cjs');
@@ -102,6 +113,141 @@ async function cleanOutputDir(dir, attempts = 5) {
 const outputDir = path.join(projectRoot, 'dist_electron');
 await cleanOutputDir(outputDir);
 console.log(`[build-electron] cleaned   = ${outputDir}`);
+
+/*
+ * winCodeSign cache primer (Windows-only).
+ *
+ * electron-builder runs rcedit (via app-builder.exe) to embed our .ico + version
+ * strings into the EXE. app-builder fetches the legacy `winCodeSign-2.6.0` bundle
+ * to obtain rcedit-x64.exe. That bundle contains macOS symlinks
+ * (darwin/10.12/lib/libssl.dylib, libcrypto.dylib) which 7-Zip tries to recreate
+ * on extraction. On Windows without Administrator rights or Developer Mode, the
+ * OS refuses symlink creation ("A required privilege is not held by the client"),
+ * 7-Zip exits non-zero, and the whole build fails.
+ *
+ * app-builder's DownloadArtifact() short-circuits when its final cache directory
+ * already exists (CheckCache only stats the dir). So we pre-populate that exact
+ * directory ourselves, extracting with 7-Zip's `-snl-` switch which writes the
+ * symlink entries as plain files instead of real symlinks — no privilege needed.
+ * app-builder then finds a cache hit and never runs its own failing extraction.
+ *
+ * This is best-effort: any failure here just logs a warning and lets
+ * electron-builder proceed normally (on machines where symlink creation works,
+ * or where the bundle is already cached, nothing is harmed).
+ *
+ * Mirrors app-builder logic in pkg/download/{tool,artifactDownloader}.go.
+ */
+const WIN_CODE_SIGN_ID = 'winCodeSign-2.6.0';
+// base64 sha512 of winCodeSign-2.6.0.7z (from app-builder pkg/download/tool.go)
+const WIN_CODE_SIGN_SHA512 =
+  '6LQI2d9BPC3Xs0ZoTQe1o3tPiA28c7+PY69Q9i/pD8lY45psMtHuLwv3vRckiVr3Zx1cbNyLlBR8STwCdcHwtA==';
+
+function resolveElectronBuilderCacheDir() {
+  const env = (process.env.ELECTRON_BUILDER_CACHE || '').trim();
+  if (env) return path.resolve(env);
+  const localAppData = (process.env.LOCALAPPDATA || '').trim();
+  const username = (process.env.USERNAME || '').trim().toLowerCase();
+  const isSystemUser =
+    localAppData.toLowerCase().includes('\\windows\\system32\\') || username === 'system';
+  if (!localAppData || isSystemUser) {
+    return path.join(os.tmpdir(), 'electron-builder-cache');
+  }
+  return path.join(localAppData, 'electron-builder', 'Cache');
+}
+
+function winCodeSignUrl() {
+  const base =
+    process.env.NPM_CONFIG_ELECTRON_BUILDER_BINARIES_MIRROR ||
+    process.env.npm_config_electron_builder_binaries_mirror ||
+    process.env.npm_package_config_electron_builder_binaries_mirror ||
+    process.env.ELECTRON_BUILDER_BINARIES_MIRROR ||
+    'https://github.com/electron-userland/electron-builder-binaries/releases/download/';
+  const dir =
+    process.env.NPM_CONFIG_ELECTRON_BUILDER_BINARIES_CUSTOM_DIR ||
+    process.env.npm_config_electron_builder_binaries_custom_dir ||
+    process.env.npm_package_config_electron_builder_binaries_custom_dir ||
+    process.env.ELECTRON_BUILDER_BINARIES_CUSTOM_DIR ||
+    WIN_CODE_SIGN_ID;
+  return `${base}${dir}/${WIN_CODE_SIGN_ID}.7z`;
+}
+
+function sha512Base64(filePath) {
+  return createHash('sha512').update(readFileSync(filePath)).digest('base64');
+}
+
+async function downloadTo(url, dest) {
+  const res = await fetch(url, { redirect: 'follow' });
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status} ${res.statusText} for ${url}`);
+  }
+  writeFileSync(dest, Buffer.from(await res.arrayBuffer()));
+}
+
+async function primeWinCodeSignCache() {
+  if (process.platform !== 'win32') return;
+  try {
+    const cacheParent = path.join(resolveElectronBuilderCacheDir(), 'winCodeSign');
+    const targetDir = path.join(cacheParent, WIN_CODE_SIGN_ID);
+    // rcedit-x64.exe lives at the archive root; its presence means a complete cache.
+    if (existsSync(path.join(targetDir, 'rcedit-x64.exe'))) {
+      console.log('[build-electron] winCodeSign cache present — primer not needed');
+      return;
+    }
+
+    console.log('[build-electron] priming winCodeSign cache (symlink-safe extraction)…');
+    mkdirSync(cacheParent, { recursive: true });
+
+    // Reuse a valid leftover archive if one exists (avoids a redundant download),
+    // otherwise download a fresh copy and verify its checksum.
+    let archive;
+    for (const name of readdirSync(cacheParent)) {
+      if (!name.toLowerCase().endsWith('.7z')) continue;
+      const candidate = path.join(cacheParent, name);
+      try {
+        if (sha512Base64(candidate) === WIN_CODE_SIGN_SHA512) {
+          archive = candidate;
+          break;
+        }
+      } catch {
+        /* ignore unreadable candidate */
+      }
+    }
+
+    let downloaded = null;
+    if (!archive) {
+      downloaded = path.join(cacheParent, `wincodesign-primer-${process.pid}.7z`);
+      await downloadTo(winCodeSignUrl(), downloaded);
+      if (sha512Base64(downloaded) !== WIN_CODE_SIGN_SHA512) {
+        throw new Error('checksum mismatch for downloaded winCodeSign archive');
+      }
+      archive = downloaded;
+    }
+
+    // Extract into a temp dir first, then atomically move into place so a partial
+    // extraction can never masquerade as a valid cache entry.
+    const stagingDir = path.join(cacheParent, `wincodesign-primer-${process.pid}`);
+    rmSync(stagingDir, { recursive: true, force: true });
+    mkdirSync(stagingDir, { recursive: true });
+    const path7za = require('7zip-bin').path7za;
+    // `-snl-` = do NOT restore symbolic links (write them as plain files). This is
+    // the whole point: it avoids the privileged symlink creation that fails.
+    execFileSync(path7za, ['x', '-snl-', '-bd', '-y', archive, `-o${stagingDir}`], {
+      stdio: 'ignore',
+    });
+
+    rmSync(targetDir, { recursive: true, force: true });
+    renameSync(stagingDir, targetDir);
+    if (downloaded) rmSync(downloaded, { force: true });
+    console.log(`[build-electron] winCodeSign cache primed at ${targetDir}`);
+  } catch (err) {
+    console.warn(
+      `[build-electron] winCodeSign primer skipped (${err?.message || err}); ` +
+        'letting electron-builder handle it normally.',
+    );
+  }
+}
+
+await primeWinCodeSignCache();
 
 /*
  * The `\${ext}` sequences below produce the literal string `${ext}` in the

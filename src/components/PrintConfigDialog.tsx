@@ -53,6 +53,7 @@ const DEFAULT_PROFILE: Omit<UserPrintProfile, 'id'> = {
   offsetLeftMm: 0,
   offsetRightMm: 0,
   showGrid: false,
+  showBarcodeValue: true,
 };
 
 export function PrintConfigDialog({ open, onOpenChange, onPrint }: PrintConfigDialogProps) {
@@ -105,6 +106,7 @@ export function PrintConfigDialog({ open, onOpenChange, onPrint }: PrintConfigDi
     offsetLeftMm: p.offsetLeftMm ?? 0,
     offsetRightMm: p.offsetRightMm ?? p.sheetHorizontalOffsetMm ?? 0,
     showGrid: p.showGrid ?? false,
+    showBarcodeValue: p.showBarcodeValue ?? true,
   });
 
   const handleAddNew = useCallback(() => {
@@ -154,6 +156,7 @@ export function PrintConfigDialog({ open, onOpenChange, onPrint }: PrintConfigDi
       offsetLeftMm: form.offsetLeftMm,
       offsetRightMm: form.offsetRightMm,
       showGrid: form.showGrid,
+      showBarcodeValue: form.showBarcodeValue,
     });
     onPrint(format);
     onOpenChange(false);
@@ -356,6 +359,13 @@ export function PrintConfigDialog({ open, onOpenChange, onPrint }: PrintConfigDi
                       {advancedOpen ? 'Hide' : 'Show'} Printer Offsets
                     </Button>
                   </CollapsibleTrigger>
+                  <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none">
+                    <Checkbox
+                      checked={form.showBarcodeValue !== false}
+                      onCheckedChange={(checked) => updateField('showBarcodeValue', checked === true)}
+                    />
+                    Show Barcode Value
+                  </label>
                   <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none">
                     <Checkbox
                       checked={!!form.showGrid}

@@ -26,6 +26,8 @@ export interface UserPrintProfile {
   offsetRightMm?: number;
   /** When true, draw a thin border around each label cell on the printed sheet (a4-label-sheet only). */
   showGrid?: boolean;
+  /** When false, the human-readable barcode value is omitted from printed output. Defaults to true. */
+  showBarcodeValue?: boolean;
   // Legacy fields (kept for backward-compat with previously saved profiles)
   sheetTopMarginMm?: number;
   sheetBarcodeOffsetMm?: number;

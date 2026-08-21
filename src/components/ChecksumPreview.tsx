@@ -145,13 +145,14 @@ export function ChecksumPreview({ variants, inputValue, widthMils = 7.5, dpi = 3
     }
 
     try {
+      const showValue = printFormat.showBarcodeValue !== false;
       await generatePrintPdf(
         printableCards.map(c => ({
           dataUrl: c.dataUrl,
           widthPx: c.widthPx,
           heightPx: c.heightPx,
           dpi,
-          label: `${c.name}: ${c.fullValue}`,
+          label: showValue ? `${c.name}: ${c.fullValue}` : undefined,
         })),
         printFormat,
       );

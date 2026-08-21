@@ -450,7 +450,7 @@ export function BarcodeControls({ config, onChange, isValid, errorMessage }: Bar
       {/* Display Options */}
       <div className="flex items-center justify-between p-4 bg-secondary/50 rounded-xl border border-border/30">
         <Label htmlFor="display-value" className="text-sm font-medium cursor-pointer">
-          Show Value Text
+          Show Barcode Value
         </Label>
         <Switch
           id="display-value"

@@ -204,6 +204,14 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
       // jsPDF places the image at the same physical size.
       let printDpi: number = config.dpi;
 
+      // Whether the human-readable value should appear in the printed output.
+      // Controlled by the "Show Barcode Value" toggle in the print dialog
+      // (defaults to true). When false, no value is baked into the image and
+      // no text label is drawn below it.
+      const showValue = printFormat.showBarcodeValue !== false;
+      const imgDisplayValue = showValue ? config.displayValue : false;
+      const printLabel = showValue ? (config.displayValue ? undefined : barcodeText) : undefined;
+
       // Helper to apply the quality blur (B/C) to a raw PNG dataUrl before
       // it goes into the PDF. Mirrors the preview's CSS blur so the printed
       // output actually reflects the user's quality choice.
@@ -237,7 +245,7 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
         // blur). This preserves the rotation / blur the user configured —
         // previously the print path bypassed every effect, producing an
         // axis-aligned crisp barcode regardless of the UI sliders.
-        const exportCanvas = await renderExportCanvas();
+        const exportCanvas = await renderExportCanvas(imgDisplayValue);
         if (!exportCanvas) {
           toast.error('Failed to render barcode for print');
           return;
@@ -256,7 +264,7 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
           bcid: config.format,
           text: barcodeText,
           scale: modulePixels,
-          includetext: config.displayValue,
+          includetext: imgDisplayValue,
           textsize: clampBwipTextsize(config.fontSize * dpiScale),
           textxalign: 'center',
           backgroundcolor: config.background.replace('#', ''),
@@ -272,7 +280,7 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
         // (bwip-js ignores includetext for QR/Datamatrix/Aztec/PDF417).
         let printSource = tempCanvas;
         let printLabelCanvas: HTMLCanvasElement | null = null;
-        if (config.displayValue && barcodeText) {
+        if (imgDisplayValue && barcodeText) {
           printLabelCanvas = appendValueLabelToCanvas(
             tempCanvas,
             barcodeText,
@@ -302,7 +310,7 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
           format: getJsBarcodeFormat(config.format),
           width: modulePixels,
           height: config.height * dpiScale,
-          displayValue: config.displayValue,
+          displayValue: imgDisplayValue,
           fontSize: config.fontSize * dpiScale,
           lineColor: config.lineColor,
           background: config.background,
@@ -345,7 +353,7 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
 
       // Generate PDF and open in new tab for printing
       await generatePrintPdf(
-        [{ dataUrl, widthPx, heightPx, dpi: printDpi, label: config.displayValue ? undefined : barcodeText }],
+        [{ dataUrl, widthPx, heightPx, dpi: printDpi, label: printLabel }],
         printFormat,
       );
     } catch (error) {

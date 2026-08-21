@@ -187,3 +187,24 @@ describe('BatchPreview - Output Size preview scaling', () => {
   });
 });
 
+describe('BatchPreview - Show Barcode Value toggle', () => {
+  const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+
+  it('shows the value when enabled and hides it (keeping the image) when disabled', async () => {
+    const { render } = await import('@testing-library/react');
+    const { BatchPreview } = await import('./BatchPreview');
+    const img: BarcodeImageResult = { value: 'VAL-42', dataUrl: png, width: 100, height: 50, widthMm: 10, heightMm: 5 };
+
+    // Default (prop omitted) and explicit true both render the value text.
+    const shown = render(<BatchPreview images={[img]} isGenerating={false} actionsDisabled={false} />);
+    expect(shown.container.textContent).toContain('VAL-42');
+    shown.unmount();
+
+    // Disabled: value text gone, barcode image preserved.
+    const hidden = render(<BatchPreview images={[img]} isGenerating={false} actionsDisabled={false} showBarcodeValue={false} />);
+    expect(hidden.container.textContent).not.toContain('VAL-42');
+    expect(hidden.container.querySelector('img[alt="VAL-42"]')).not.toBeNull();
+    hidden.unmount();
+  });
+});
+

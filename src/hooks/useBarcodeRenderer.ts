@@ -16,7 +16,7 @@ export interface UseBarcodeRendererResult {
   effectiveWidth: number;
   modulePixels: number;
   qualityBlur: number;
-  renderExportCanvas: () => Promise<HTMLCanvasElement | null>;
+  renderExportCanvas: (displayValueOverride?: boolean) => Promise<HTMLCanvasElement | null>;
 }
 
 /**
@@ -439,10 +439,15 @@ export function useBarcodeRenderer(
    *   modulePixels = round(widthMils × dpi / 1000)   e.g. 7.5 mil @ 300 DPI → 2 px
    *   physical size = pixels × 25.4 / dpi             e.g. 2 px @ 300 DPI → 0.17 mm (6.7 mil)
    */
-  const renderExportCanvas = async (): Promise<HTMLCanvasElement | null> => {
+  const renderExportCanvas = async (displayValueOverride?: boolean): Promise<HTMLCanvasElement | null> => {
     const exportCanvas = document.createElement('canvas');
     const exportCtx = exportCanvas.getContext('2d');
     if (!exportCtx) return null;
+
+    // Whether to render the human-readable value. Callers (e.g. the print
+    // path) may override the user's on-screen `config.displayValue` — for
+    // example to omit the value from printed output. Defaults to the config.
+    const showValueText = displayValueOverride ?? config.displayValue;
 
     if (is2D) {
       try {
@@ -452,7 +457,7 @@ export function useBarcodeRenderer(
           bcid: config.format,
           text: barcodeText,
           scale: modulePixels,
-          includetext: config.displayValue,
+          includetext: showValueText,
           textsize: clampBwipTextsize(config.fontSize * dpiScale),
           textxalign: 'center',
           backgroundcolor: config.background.replace('#', ''),
@@ -470,7 +475,7 @@ export function useBarcodeRenderer(
         // for exports — system-safe in isolated rasterisation contexts.
         let sourceCanvas = tempCanvas;
         let labelCanvas: HTMLCanvasElement | null = null;
-        if (config.displayValue && barcodeText) {
+        if (showValueText && barcodeText) {
           labelCanvas = appendValueLabelToCanvas(
             tempCanvas,
             barcodeText,
@@ -519,7 +524,7 @@ export function useBarcodeRenderer(
         format: getJsBarcodeFormat(config.format),
         width: modulePixels,
         height: config.height * dpiScale,
-        displayValue: config.displayValue,
+        displayValue: showValueText,
         fontSize: config.fontSize * dpiScale,
         lineColor: config.lineColor,
         background: config.background,

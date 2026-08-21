@@ -496,5 +496,43 @@ describe('printFormats', () => {
       // Net horizontal = right - left
       expect(format.sheetHorizontalOffsetMm).toBe(4.5);
     });
+
+    it('passes through showBarcodeValue when provided', async () => {
+      const { buildPrintFormat } = await import('./printFormats');
+      const off = buildPrintFormat({
+        id: 'no-value',
+        label: 'No Value',
+        widthMm: 70,
+        heightMm: 35,
+        marginMm: 2,
+        mode: 'a4-label-sheet',
+        showBarcodeValue: false,
+      });
+      expect(off.showBarcodeValue).toBe(false);
+
+      const on = buildPrintFormat({
+        id: 'with-value',
+        label: 'With Value',
+        widthMm: 70,
+        heightMm: 35,
+        marginMm: 2,
+        mode: 'a4-label-sheet',
+        showBarcodeValue: true,
+      });
+      expect(on.showBarcodeValue).toBe(true);
+    });
+
+    it('leaves showBarcodeValue undefined when omitted (treated as enabled)', async () => {
+      const { buildPrintFormat } = await import('./printFormats');
+      const format = buildPrintFormat({
+        id: 'default-value',
+        label: 'Default Value',
+        widthMm: 70,
+        heightMm: 35,
+        marginMm: 2,
+        mode: 'a4-label-sheet',
+      });
+      expect(format.showBarcodeValue).toBeUndefined();
+    });
   });
 });
