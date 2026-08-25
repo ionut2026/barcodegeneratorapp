@@ -1,6 +1,67 @@
 import JsBarcode from 'jsbarcode';
 import bwipjs from 'bwip-js';
-import { BarcodeFormat, validateInput, normalizeForRendering, is2DBarcode, physicalPxScale, getJsBarcodeFormat } from '@/lib/barcodeUtils';
+import { BarcodeFormat, validateInput, normalizeForRendering, is2DBarcode, physicalPxScale, getJsBarcodeFormat, getDataMatrixShapeOptions, dataMatrixModuleScaleForHeight } from '@/lib/barcodeUtils';
+
+/**
+ * Optional per-render tweaks shared by the headless generators. Currently
+ * carries the DataMatrix long/narrow (DMRE) flag and its minimum-height target;
+ * kept as an object so future 2D shape options can be added without changing
+ * every call site.
+ */
+export interface BarcodeRenderOptions {
+  /** DataMatrix rectangular only: render a long & narrow rectangular (DMRE) symbol. */
+  dataMatrixRectangular?: boolean;
+  /** DataMatrix (square and rectangular): minimum physical symbol height in mm. */
+  dataMatrixMinHeightMm?: number;
+  /** DataMatrix long & narrow (DMRE) only: force a fixed size (e.g. '16x48'); 'auto' fits data. */
+  dataMatrixVersion?: string;
+}
+
+/**
+ * Probe-render a DataMatrix symbol at 1 px/module to read its module-row count
+ * (canvas height at scale 1, padding 0 == module rows). Returns 0 if bwip-js
+ * fails so callers can fall back to the un-boosted module size.
+ */
+export function measureDataMatrixRows(text: string, rectangular: boolean, version?: string): number {
+  const probe = document.createElement('canvas');
+  const probeOptions: Record<string, unknown> = {
+    bcid: 'datamatrix',
+    text,
+    scale: 1,
+    padding: 0,
+    ...getDataMatrixShapeOptions({ format: 'datamatrix', dataMatrixRectangular: rectangular, dataMatrixVersion: version }),
+  };
+  try {
+    bwipjs.toCanvas(probe, probeOptions as Parameters<typeof bwipjs.toCanvas>[1]);
+  } catch {
+    probe.width = 0;
+    probe.height = 0;
+    return 0;
+  }
+  const rows = probe.height;
+  probe.width = 0;
+  probe.height = 0;
+  return rows;
+}
+
+/**
+ * Resolve the base module pixel size for a DataMatrix render, enlarging it (via
+ * a bwip-js row-count probe) so the symbol meets its minimum-height target while
+ * keeping modules square. Applies to BOTH square and rectangular (DMRE) symbols
+ * — a square symbol boosted to a fixed height stays a compact, constant footprint
+ * (~height × height) no matter the character count, which is what fits a curved
+ * sample tube. For the no-min-height case returns `baseModulePx` unchanged, so it
+ * is safe to call on every DataMatrix render.
+ */
+export function computeDataMatrixModuleScale(
+  text: string,
+  baseModulePx: number,
+  opts: { rectangular?: boolean; version?: string; minHeightMm?: number; dpi: number },
+): number {
+  if (!opts.minHeightMm || opts.minHeightMm <= 0) return baseModulePx;
+  const rows = measureDataMatrixRows(text, !!opts.rectangular, opts.version);
+  return dataMatrixModuleScaleForHeight(rows, opts.minHeightMm, opts.dpi, baseModulePx);
+}
 
 // ── PNG pHYs DPI injection ─────────────────────────────────────────────────────
 // Canvas.toDataURL() produces PNGs without physical resolution metadata.
@@ -204,9 +265,21 @@ function render2DToCanvas(
   scale: number,
   paddingUnits: number,
   modulePixels: number,
+  dpi: number,
+  options: BarcodeRenderOptions = {},
 ): { dataUrl: string; width: number; height: number } {
   const canvas = document.createElement('canvas');
-  const moduleScale = Math.max(1, Math.round(modulePixels * scale));
+  // For DataMatrix DMRE, enlarge the base module (square) so the symbol meets
+  // its minimum-height target; other formats/options leave modulePixels as-is.
+  const baseModulePx = format === 'datamatrix'
+    ? computeDataMatrixModuleScale(value, modulePixels, {
+        rectangular: options.dataMatrixRectangular,
+        version: options.dataMatrixVersion,
+        minHeightMm: options.dataMatrixMinHeightMm,
+        dpi,
+      })
+    : modulePixels;
+  const moduleScale = Math.max(1, Math.round(baseModulePx * scale));
   // bwip-js's `padding` is in "scale units" — at render time it multiplies
   // padding by the `scale` option to get pixels. To keep the QR/Datamatrix/
   // Aztec/PDF417 pattern occupying the SAME fraction of the bitmap at every
@@ -225,6 +298,7 @@ function render2DToCanvas(
     barcolor: '000000',
     includetext: false,
   };
+  Object.assign(bwipOptions, getDataMatrixShapeOptions({ format, dataMatrixRectangular: options.dataMatrixRectangular, dataMatrixVersion: options.dataMatrixVersion }));
   bwipjs.toCanvas(canvas, bwipOptions as Parameters<typeof bwipjs.toCanvas>[1]);
   const result = {
     dataUrl: canvas.toDataURL('image/png'),
@@ -249,6 +323,7 @@ function render2DToCanvas(
  * @param widthMils X-dimension in mils (default 7.5 — GS1 healthcare minimum).
  * @param dpi       Target print DPI (default 300).
  * @param height    Bar height in base pixels for 1D barcodes (default 100).
+ * @param options   Extra 2D render options (e.g. DataMatrix long/narrow DMRE).
  */
 export async function generateBarcodeImage(
   value: string,
@@ -258,6 +333,7 @@ export async function generateBarcodeImage(
   widthMils = 7.5,
   dpi = 300,
   height = 100,
+  options: BarcodeRenderOptions = {},
 ): Promise<BarcodeImageResult | null> {
   const validation = validateInput(value, format);
   if (!validation.valid) return null;
@@ -279,7 +355,7 @@ export async function generateBarcodeImage(
       // stays constant across DPIs. Do NOT use `renderMargin` here: bwip-js
       // already scales padding by its `scale` option, so any DPI-multiplied
       // value would compound and shrink the visible pattern at higher DPIs.
-      raw = render2DToCanvas(value, format, scale, margin, modulePixels);
+      raw = render2DToCanvas(value, format, scale, margin, modulePixels, dpi, options);
     } else {
       raw = await render1DToCanvas(value, format, scale, renderMargin, modulePixels, renderHeight);
     }
@@ -427,8 +503,9 @@ export async function generateBarcodeBlob(
   widthMils = 7.5,
   dpi = 300,
   height = 100,
+  options: BarcodeRenderOptions = {},
 ): Promise<Blob | null> {
-  const result = await generateBarcodeImage(value, format, scale, margin, widthMils, dpi, height);
+  const result = await generateBarcodeImage(value, format, scale, margin, widthMils, dpi, height, options);
   if (!result) return null;
 
   // Convert data URL to Blob directly (preserves pHYs DPI chunk).

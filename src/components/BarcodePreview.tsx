@@ -1,8 +1,8 @@
 import { useMemo, useState, useEffect, useRef } from 'react';
 import JsBarcode from 'jsbarcode';
 import bwipjs from 'bwip-js';
-import { BarcodeConfig, normalizeForRendering, snapToPixelGrid, physicalPxScale, clampBwipTextsize, getJsBarcodeFormat } from '@/lib/barcodeUtils';
-import { injectPngDpi, appendValueLabelToCanvas } from '@/lib/barcodeImageGenerator';
+import { BarcodeConfig, normalizeForRendering, snapToPixelGrid, physicalPxScale, clampBwipTextsize, getJsBarcodeFormat, getDataMatrixShapeOptions } from '@/lib/barcodeUtils';
+import { injectPngDpi, appendValueLabelToCanvas, computeDataMatrixModuleScale } from '@/lib/barcodeImageGenerator';
 import { ImageEffectsConfig, getDefaultEffectsConfig } from '@/components/ImageEffects';
 import { AlertCircle, ShieldCheck, FileJson, Loader2 } from 'lucide-react';
 import { useCertification } from '@/hooks/useCertification';
@@ -260,10 +260,18 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
         // 2D barcode: render via bwip-js to canvas
         const dpiScale = physicalPxScale(config.dpi);
         const tempCanvas = document.createElement('canvas');
+        const baseModule = config.format === 'datamatrix'
+          ? computeDataMatrixModuleScale(barcodeText, modulePixels, {
+              rectangular: config.dataMatrixRectangular,
+              version: config.dataMatrixVersion,
+              minHeightMm: config.dataMatrixMinHeightMm,
+              dpi: config.dpi,
+            })
+          : modulePixels;
         const bwipOptions: Record<string, unknown> = {
           bcid: config.format,
           text: barcodeText,
-          scale: modulePixels,
+          scale: baseModule,
           includetext: imgDisplayValue,
           textsize: clampBwipTextsize(config.fontSize * dpiScale),
           textxalign: 'center',
@@ -275,6 +283,7 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
           bwipOptions.height = Math.floor((config.height * dpiScale) / 10);
           bwipOptions.width = Math.floor((config.height * dpiScale) / 3);
         }
+        Object.assign(bwipOptions, getDataMatrixShapeOptions(config));
         bwipjs.toCanvas(tempCanvas, bwipOptions as unknown as Parameters<typeof bwipjs.toCanvas>[1]);
         // Append HRI text below the 2D bitmap when displayValue is on
         // (bwip-js ignores includetext for QR/Datamatrix/Aztec/PDF417).

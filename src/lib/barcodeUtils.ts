@@ -85,6 +85,112 @@ export interface BarcodeConfig {
   checksumType: ChecksumType;
   quality: QualityLevel;
   scale: number;
+  /**
+   * DataMatrix only: render a long & narrow rectangular symbol using the
+   * Data Matrix Rectangular Extension (DMRE / ISO-IEC 21471) instead of the
+   * default square. Ignored for every other format. See
+   * getDataMatrixShapeOptions().
+   */
+  dataMatrixRectangular?: boolean;
+  /**
+   * DataMatrix (square *and* rectangular/DMRE): minimum physical symbol height
+   * in mm. When set, the module (X-dimension) is enlarged uniformly — keeping
+   * modules square for scannability / ISO grading — until the symbol is at
+   * least this tall. This makes a square symbol a compact, constant footprint
+   * (e.g. ~5×5 mm) regardless of how many characters it encodes, which is what
+   * fits on a curved sample tube. Default 5 mm. See
+   * dataMatrixModuleScaleForHeight().
+   */
+  dataMatrixMinHeightMm?: number;
+  /**
+   * DataMatrix long & narrow (DMRE) only: force a specific symbol size (rows ×
+   * cols), e.g. '16x48' to match a fixed-format label like the Grifols reagent
+   * tube. 'auto' (or undefined) lets bwip-js pick the smallest rectangle that
+   * fits the data (needed for payloads beyond a single fixed size). Ignored
+   * unless `dataMatrixRectangular` is on. See getDataMatrixShapeOptions().
+   */
+  dataMatrixVersion?: string;
+}
+
+/**
+ * Valid rows × cols sizes for a long & narrow (DMRE) DataMatrix, offered in the
+ * size picker. 'auto' fits the data; the rest force a fixed symbol size. The
+ * larger the size, the more data it holds (e.g. 16×48 is the Grifols tube
+ * format and comfortably holds ~44 numeric digits).
+ */
+export const DATAMATRIX_RECTANGULAR_VERSIONS: { value: string; label: string }[] = [
+  { value: 'auto', label: 'Auto (fit to data)' },
+  { value: '8x18', label: '8 × 18' },
+  { value: '8x32', label: '8 × 32' },
+  { value: '8x48', label: '8 × 48' },
+  { value: '8x64', label: '8 × 64' },
+  { value: '8x80', label: '8 × 80' },
+  { value: '8x96', label: '8 × 96' },
+  { value: '8x120', label: '8 × 120' },
+  { value: '8x144', label: '8 × 144' },
+  { value: '12x26', label: '12 × 26' },
+  { value: '12x36', label: '12 × 36' },
+  { value: '12x64', label: '12 × 64' },
+  { value: '12x88', label: '12 × 88' },
+  { value: '16x36', label: '16 × 36' },
+  { value: '16x48', label: '16 × 48 (Grifols)' },
+  { value: '16x64', label: '16 × 64' },
+  { value: '20x36', label: '20 × 36' },
+  { value: '20x44', label: '20 × 44' },
+  { value: '20x64', label: '20 × 64' },
+  { value: '22x48', label: '22 × 48' },
+  { value: '24x48', label: '24 × 48' },
+  { value: '24x64', label: '24 × 64' },
+  { value: '26x40', label: '26 × 40' },
+  { value: '26x48', label: '26 × 48' },
+  { value: '26x64', label: '26 × 64' },
+];
+
+/**
+ * Compute the module pixel size needed so a DataMatrix symbol with `rows`
+ * module-rows is at least `minHeightMm` tall at `dpi`, never shrinking below
+ * `baseModulePx`. Modules stay square (the returned size applies to both axes),
+ * which keeps the symbol ISO-compliant and reliably scannable. Applies to both
+ * square and rectangular (DMRE) symbols — a boosted square symbol becomes a
+ * compact, constant footprint (~height × height) for any character count.
+ * Pure/​testable — the row count is supplied by the caller (bwip-js probe render).
+ */
+export function dataMatrixModuleScaleForHeight(
+  rows: number,
+  minHeightMm: number,
+  dpi: number,
+  baseModulePx: number,
+): number {
+  if (!rows || rows <= 0 || !minHeightMm || minHeightMm <= 0) return baseModulePx;
+  const neededPx = Math.ceil((minHeightMm * dpi) / (25.4 * rows));
+  return Math.max(baseModulePx, neededPx);
+}
+
+/**
+ * DataMatrix Rectangular Extension (DMRE / ISO-IEC 21471) render options.
+ *
+ * Standard rectangular Data Matrix tops out at 16×48 (~47 numeric / ~31
+ * alphanumeric characters). Enabling `dataMatrixRectangular` selects a long &
+ * narrow DMRE symbol (e.g. 8×144, 26×64) that encodes well beyond the
+ * 42-character standard-rectangle ceiling. An optional `dataMatrixVersion`
+ * (e.g. '16x48') forces a fixed symbol size — matching a printed label such as
+ * the Grifols reagent tube — while 'auto'/undefined lets bwip-js pick the
+ * smallest fitting rectangle. Returns bwip-js options to spread into any
+ * DataMatrix render call; returns `{}` for every other format or when the
+ * option is off, so callers can spread it unconditionally without altering
+ * existing behaviour.
+ */
+export function getDataMatrixShapeOptions(
+  config: Pick<BarcodeConfig, 'format' | 'dataMatrixRectangular' | 'dataMatrixVersion'>,
+): Record<string, unknown> {
+  if (config.format === 'datamatrix' && config.dataMatrixRectangular) {
+    const options: Record<string, unknown> = { format: 'rectangle', dmre: true };
+    if (config.dataMatrixVersion && config.dataMatrixVersion !== 'auto') {
+      options.version = config.dataMatrixVersion;
+    }
+    return options;
+  }
+  return {};
 }
 
 // ── Checksum options registry ─────────────────────────────────────────────────
@@ -1111,5 +1217,8 @@ export function getDefaultConfig(): BarcodeConfig {
     checksumType: 'none',
     quality: 'A',
      scale: 1,
+    dataMatrixRectangular: false,
+    dataMatrixMinHeightMm: 5,
+    dataMatrixVersion: 'auto',
   };
 }

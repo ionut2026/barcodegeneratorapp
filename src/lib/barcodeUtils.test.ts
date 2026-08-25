@@ -24,6 +24,8 @@ import {
   isNumericOnlyFormat,
   is2DBarcode,
   getDefaultConfig,
+  getDataMatrixShapeOptions,
+  dataMatrixModuleScaleForHeight,
   getApplicableChecksums,
   calculateGS1Mod10,
   clampBwipTextsize,
@@ -545,6 +547,85 @@ describe('is2DBarcode', () => {
 
   it('"CODE128" → false', () => {
     expect(is2DBarcode('CODE128')).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getDataMatrixShapeOptions
+// ---------------------------------------------------------------------------
+describe('getDataMatrixShapeOptions', () => {
+  it('returns DMRE rectangle options when datamatrix + rectangular enabled', () => {
+    expect(getDataMatrixShapeOptions({ format: 'datamatrix', dataMatrixRectangular: true }))
+      .toEqual({ format: 'rectangle', dmre: true });
+  });
+
+  it('returns {} for datamatrix when rectangular disabled', () => {
+    expect(getDataMatrixShapeOptions({ format: 'datamatrix', dataMatrixRectangular: false }))
+      .toEqual({});
+  });
+
+  it('returns {} for datamatrix when flag is undefined', () => {
+    expect(getDataMatrixShapeOptions({ format: 'datamatrix' })).toEqual({});
+  });
+
+  it('returns {} for non-datamatrix formats even when flag is true', () => {
+    expect(getDataMatrixShapeOptions({ format: 'qrcode', dataMatrixRectangular: true })).toEqual({});
+    expect(getDataMatrixShapeOptions({ format: 'CODE39', dataMatrixRectangular: true })).toEqual({});
+  });
+
+  it('adds a fixed version when dataMatrixVersion is a size', () => {
+    expect(getDataMatrixShapeOptions({ format: 'datamatrix', dataMatrixRectangular: true, dataMatrixVersion: '16x48' }))
+      .toEqual({ format: 'rectangle', dmre: true, version: '16x48' });
+  });
+
+  it('omits version when dataMatrixVersion is "auto" or undefined', () => {
+    expect(getDataMatrixShapeOptions({ format: 'datamatrix', dataMatrixRectangular: true, dataMatrixVersion: 'auto' }))
+      .toEqual({ format: 'rectangle', dmre: true });
+    expect(getDataMatrixShapeOptions({ format: 'datamatrix', dataMatrixRectangular: true }))
+      .toEqual({ format: 'rectangle', dmre: true });
+  });
+
+  it('ignores version when rectangular is off (square)', () => {
+    expect(getDataMatrixShapeOptions({ format: 'datamatrix', dataMatrixRectangular: false, dataMatrixVersion: '16x48' }))
+      .toEqual({});
+  });
+});
+
+// ---------------------------------------------------------------------------
+// dataMatrixModuleScaleForHeight
+// ---------------------------------------------------------------------------
+describe('dataMatrixModuleScaleForHeight', () => {
+  it('enlarges the module so a 16-row symbol reaches 5mm at 300 DPI', () => {
+    // needed = ceil(5 * 300 / (25.4 * 16)) = ceil(3.69) = 4 px/module
+    const px = dataMatrixModuleScaleForHeight(16, 5, 300, 2);
+    expect(px).toBe(4);
+    // 16 rows * 4 px = 64 px -> 64 * 25.4 / 300 = 5.42 mm >= 5 mm
+    expect((16 * px * 25.4) / 300).toBeGreaterThanOrEqual(5);
+  });
+
+  it('never shrinks below the requested base module', () => {
+    // needed for 40 rows @5mm/300dpi = ceil(1.48) = 2, base is 6 -> keep 6
+    expect(dataMatrixModuleScaleForHeight(40, 5, 300, 6)).toBe(6);
+  });
+
+  it('scales the needed pixels with DPI', () => {
+    // At 600 DPI needed = ceil(5 * 600 / (25.4 * 16)) = ceil(7.38) = 8
+    expect(dataMatrixModuleScaleForHeight(16, 5, 600, 2)).toBe(8);
+  });
+
+  it('returns base module unchanged when minHeight is 0 or missing', () => {
+    expect(dataMatrixModuleScaleForHeight(16, 0, 300, 3)).toBe(3);
+    expect(dataMatrixModuleScaleForHeight(16, -1, 300, 3)).toBe(3);
+  });
+
+  it('returns base module unchanged when rows is 0 (probe failure)', () => {
+    expect(dataMatrixModuleScaleForHeight(0, 5, 300, 3)).toBe(3);
+  });
+
+  it('taller targets require larger modules', () => {
+    const at5 = dataMatrixModuleScaleForHeight(16, 5, 300, 2);
+    const at10 = dataMatrixModuleScaleForHeight(16, 10, 300, 2);
+    expect(at10).toBeGreaterThan(at5);
   });
 });
 
