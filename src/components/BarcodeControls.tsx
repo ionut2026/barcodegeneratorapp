@@ -143,7 +143,7 @@ export function BarcodeControls({ config, onChange, isValid, errorMessage }: Bar
           <div className="flex items-center justify-between p-4 bg-secondary/50 rounded-xl border border-border/30">
             <div className="flex flex-col pr-4">
               <Label htmlFor="datamatrix-rectangular" className="text-sm font-medium cursor-pointer">
-                Long &amp; Narrow (DMRE)
+                Long Barcode
               </Label>
             </div>
             <Switch
@@ -188,7 +188,7 @@ export function BarcodeControls({ config, onChange, isValid, errorMessage }: Bar
                 id="datamatrix-min-height"
                 value={[config.dataMatrixMinHeightMm ?? 5]}
                 onValueChange={([value]) => onChange({ ...config, dataMatrixMinHeightMm: value })}
-                min={2}
+                min={5}
                 max={20}
                 step={0.5}
                 className="w-full"
