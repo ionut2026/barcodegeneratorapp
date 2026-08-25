@@ -86,6 +86,18 @@ export function BatchPreview({ images, onCustomPrint, onDownloadZip, onExportPDF
     return style;
   };
 
+  // Physical printed size of a barcode in millimetres, derived from its bitmap
+  // pixel dimensions and the batch DPI (px / dpi × 25.4). Updates live when the
+  // DataMatrix Minimum Height slider regenerates the batch, so the width-
+  // normalised thumbnail (which can't show a proportional size change) still
+  // surfaces the real print height. Returns null for images lacking dimensions.
+  const physicalSizeMm = (img: BarcodeImageResult): string | null => {
+    if (!img.width || !img.height || !dpi) return null;
+    const wMm = (img.width * 25.4) / dpi;
+    const hMm = (img.height * 25.4) / dpi;
+    return `${wMm.toFixed(1)} × ${hMm.toFixed(1)} mm`;
+  };
+
   const downloadBarcodeImage = (img: BarcodeImageResult) => {
     try {
       const dpiUrl = injectPngDpi(img.dataUrl, dpi);
@@ -217,6 +229,11 @@ export function BatchPreview({ images, onCustomPrint, onDownloadZip, onExportPDF
                                {img.value}
                              </span>
                            )}
+                           {physicalSizeMm(img) && (
+                             <span className="text-[10px] font-mono text-muted-foreground/70">
+                               {physicalSizeMm(img)}
+                             </span>
+                           )}
                          </div>
                        ))}
                      </div>
@@ -250,6 +267,11 @@ export function BatchPreview({ images, onCustomPrint, onDownloadZip, onExportPDF
                       {showBarcodeValue && (
                         <span className="text-xs font-mono text-foreground text-center break-all leading-tight">
                           {img.value}
+                        </span>
+                      )}
+                      {physicalSizeMm(img) && (
+                        <span className="text-[10px] font-mono text-muted-foreground/70">
+                          {physicalSizeMm(img)}
                         </span>
                       )}
                       {img.formatLabel && (

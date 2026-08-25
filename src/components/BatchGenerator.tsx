@@ -39,6 +39,8 @@ export interface BatchActions {
   previewScale: number;
   /** Whether the human-readable value is shown beneath each Batch Preview barcode. */
   showBarcodeValue: boolean;
+  /** Batch output DPI — used by the preview to report each barcode's physical print size. */
+  dpi: number;
 }
 
 interface BatchGeneratorProps {
@@ -590,8 +592,8 @@ export function BatchGenerator({ onImagesGenerated, onActionsReady }: BatchGener
   const isDisabled = isGenerating || batches.length === 0;
 
   useEffect(() => {
-    onActionsReady?.({ downloadAsZip, exportAsPDF, isDisabled, isGenerating, previewScale: scale, showBarcodeValue });
-  }, [downloadAsZip, exportAsPDF, isDisabled, isGenerating, scale, showBarcodeValue]);
+    onActionsReady?.({ downloadAsZip, exportAsPDF, isDisabled, isGenerating, previewScale: scale, showBarcodeValue, dpi });
+  }, [downloadAsZip, exportAsPDF, isDisabled, isGenerating, scale, showBarcodeValue, dpi]);
 
   const totalImages = batches.reduce((sum, b) => sum + b.images.length, 0);
 
