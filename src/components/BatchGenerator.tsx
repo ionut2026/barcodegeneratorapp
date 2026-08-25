@@ -312,7 +312,7 @@ export function BatchGenerator({ onImagesGenerated, onActionsReady }: BatchGener
               chunk.map(async (val) => {
                 if (!validateInput(val, batch.format, batch.checksumType).valid) return null;
                 const processedVal = applyChecksum(val, batch.format, batch.checksumType);
-                const result = await generateBarcodeImage(processedVal, batch.format, scale, margin, widthMils, dpi, height, { dataMatrixRectangular: batch.dataMatrixRectangular, dataMatrixMinHeightMm: batch.dataMatrixMinHeightMm, dataMatrixVersion: batch.dataMatrixVersion });
+                const result = await generateBarcodeImage(processedVal, batch.format, scale, margin, widthMils, dpi, height, { dataMatrixRectangular, dataMatrixMinHeightMm, dataMatrixVersion });
                 if (!result) return null;
                 // Override the result's `value` with the full display-form so
                 // batch previews/PDF labels match what JsBarcode actually
@@ -329,7 +329,7 @@ export function BatchGenerator({ onImagesGenerated, onActionsReady }: BatchGener
             if (!cancelled) setProgress((processedCount / totalItems) * 100);
             await yieldToBrowser();
           }
-          updatedById.set(batch.id, { ...batch, images });
+          updatedById.set(batch.id, { ...batch, images, dataMatrixRectangular, dataMatrixMinHeightMm, dataMatrixVersion });
         }
 
         if (cancelled) return;
@@ -350,7 +350,7 @@ export function BatchGenerator({ onImagesGenerated, onActionsReady }: BatchGener
       setIsGenerating(false);
       setProgress(0);
     };
-  }, [scale, widthMils, dpi, height, margin]);
+  }, [scale, widthMils, dpi, height, margin, dataMatrixRectangular, dataMatrixMinHeightMm, dataMatrixVersion]);
 
   const generateRandomValues = () => {
     const vals = generateRandomForFormat(format, count, stringLength);
@@ -626,9 +626,6 @@ export function BatchGenerator({ onImagesGenerated, onActionsReady }: BatchGener
                 <Label htmlFor="batch-datamatrix-rectangular" className="text-sm font-medium cursor-pointer">
                   Long &amp; Narrow (DMRE)
                 </Label>
-                <span className="text-xs text-muted-foreground mt-0.5">
-                  Rectangular Data Matrix for long payloads (&gt;42 chars)
-                </span>
               </div>
               <Switch
                 id="batch-datamatrix-rectangular"
@@ -640,7 +637,7 @@ export function BatchGenerator({ onImagesGenerated, onActionsReady }: BatchGener
               <div className="flex items-center justify-between p-3 bg-secondary/50 rounded-xl border border-border/30">
                 <div className="flex flex-col pr-4">
                   <Label htmlFor="batch-datamatrix-version" className="text-sm font-medium cursor-pointer">
-                    Size (rows × cols)
+                    Size
                   </Label>
                 </div>
                 <Select value={dataMatrixVersion} onValueChange={setDataMatrixVersion}>
@@ -655,26 +652,25 @@ export function BatchGenerator({ onImagesGenerated, onActionsReady }: BatchGener
                 </Select>
               </div>
             )}
-            <div className="flex items-center justify-between p-3 bg-secondary/50 rounded-xl border border-border/30">
-                <div className="flex flex-col pr-4">
-                  <Label htmlFor="batch-datamatrix-min-height" className="text-sm font-medium cursor-pointer">
-                    Minimum Height (mm)
-                  </Label>
-                </div>
-                <Input
-                  id="batch-datamatrix-min-height"
-                  type="number"
-                  min={1}
-                  max={50}
-                  step={0.5}
-                  value={dataMatrixMinHeightMm}
-                  onChange={(e) => {
-                    const v = parseFloat(e.target.value);
-                    setDataMatrixMinHeightMm(Number.isFinite(v) ? Math.max(0, v) : 0);
-                  }}
-                  className="w-24 h-9 text-center"
-                />
+            <div className="p-3 bg-secondary/50 rounded-xl border border-border/30 space-y-3">
+              <div className="flex justify-between text-sm">
+                <Label htmlFor="batch-datamatrix-min-height" className="text-sm font-medium">
+                  Minimum Height
+                </Label>
+                <span className="font-mono text-primary font-medium">
+                  {dataMatrixMinHeightMm.toFixed(1)} mm
+                </span>
               </div>
+              <Slider
+                id="batch-datamatrix-min-height"
+                value={[dataMatrixMinHeightMm]}
+                onValueChange={([value]) => setDataMatrixMinHeightMm(value)}
+                min={2}
+                max={20}
+                step={0.5}
+                className="w-full"
+              />
+            </div>
           </div>
         )}
 

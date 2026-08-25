@@ -145,9 +145,6 @@ export function BarcodeControls({ config, onChange, isValid, errorMessage }: Bar
               <Label htmlFor="datamatrix-rectangular" className="text-sm font-medium cursor-pointer">
                 Long &amp; Narrow (DMRE)
               </Label>
-              <span className="text-xs text-muted-foreground mt-0.5">
-                Rectangular Data Matrix for long payloads (&gt;42 chars)
-              </span>
             </div>
             <Switch
               id="datamatrix-rectangular"
@@ -159,7 +156,7 @@ export function BarcodeControls({ config, onChange, isValid, errorMessage }: Bar
             <div className="flex items-center justify-between p-4 bg-secondary/50 rounded-xl border border-border/30">
               <div className="flex flex-col pr-4">
                 <Label htmlFor="datamatrix-version" className="text-sm font-medium cursor-pointer">
-                  Size (rows × cols)
+                  Size
                 </Label>
               </div>
               <Select
@@ -178,24 +175,23 @@ export function BarcodeControls({ config, onChange, isValid, errorMessage }: Bar
             </div>
           )}
           {config.format === 'datamatrix' && (
-            <div className="flex items-center justify-between p-4 bg-secondary/50 rounded-xl border border-border/30">
-              <div className="flex flex-col pr-4">
-                <Label htmlFor="datamatrix-min-height" className="text-sm font-medium cursor-pointer">
-                  Minimum Height (mm)
+            <div className="p-4 bg-secondary/50 rounded-xl border border-border/30 space-y-3">
+              <div className="flex justify-between text-sm">
+                <Label htmlFor="datamatrix-min-height" className="text-sm font-medium">
+                  Minimum Height
                 </Label>
+                <span className="font-mono text-primary font-medium">
+                  {(config.dataMatrixMinHeightMm ?? 5).toFixed(1)} mm
+                </span>
               </div>
-              <Input
+              <Slider
                 id="datamatrix-min-height"
-                type="number"
-                min={1}
-                max={50}
+                value={[config.dataMatrixMinHeightMm ?? 5]}
+                onValueChange={([value]) => onChange({ ...config, dataMatrixMinHeightMm: value })}
+                min={2}
+                max={20}
                 step={0.5}
-                value={config.dataMatrixMinHeightMm ?? 5}
-                onChange={(e) => {
-                  const v = parseFloat(e.target.value);
-                  onChange({ ...config, dataMatrixMinHeightMm: Number.isFinite(v) ? Math.max(0, v) : 0 });
-                }}
-                className="w-24 h-10 rounded-xl bg-background/50 text-center"
+                className="w-full"
               />
             </div>
           )}
