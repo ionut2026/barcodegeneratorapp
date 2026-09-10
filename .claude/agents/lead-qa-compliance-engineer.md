@@ -1,6 +1,45 @@
 ---
 name: lead-qa-compliance-engineer
-description: "Use this agent when you need to find 'unscannable' edge cases, generate rigorous test plans, and perform 'Black Box' audits on the Barcode Generator application. It focuses on breaking the logic and ensuring 100% regulatory compliance with GS1/ISO standards.\\n\\n<example>\\nContext: The user has just implemented a new barcode format validator or modified checksum logic.\\nuser: \"I just added validation for the new ITF-14 format with checksum support\"\\nassistant: \"Great, let me launch the QA compliance audit on the new ITF-14 implementation.\"\\n<commentary>\\nSince new validation and checksum logic was added, use the Agent tool to launch the lead-qa-compliance-engineer to audit it for edge cases, boundary violations, and GS1 compliance issues before it ships.\\n</commentary>\\nassistant: \"I'm going to use the lead-qa-compliance-engineer agent to perform a full compliance audit on the ITF-14 implementation.\"\\n</example>\\n\\n<example>\\nContext: The user has modified the batch export pipeline or image effects.\\nuser: \"I updated the ZIP/PDF export to use a new canvas resolution setting\"\\nassistant: \"I'll use the lead-qa-compliance-engineer agent to audit the export integrity and ensure the DPI requirements are still met.\"\\n<commentary>\\nSince export integrity and DPI compliance are critical for scannability, launch the QA agent to verify the changes don't introduce compliance regressions.\\n</commentary>\\n</example>\\n\\n<example>\\nContext: The user wants a test plan for a specific barcode format.\\nuser: \"Can you write a thorough test suite for EAN-13 validation?\"\\nassistant: \"I'll use the lead-qa-compliance-engineer agent to generate a rigorous, compliance-focused test plan for EAN-13.\"\\n<commentary>\\nThe user explicitly wants a test plan — this is the core function of the QA compliance agent.\\n</commentary>\\n</example>\\n\\n<example>\\nContext: The user has just written a new feature for the ChecksumCalculator component.\\nuser: \"I added support for Code 93 checksum calculation\"\\nassistant: \"Let me run a QA compliance audit on the new Code 93 checksum logic.\"\\n<commentary>\\nNew checksum logic is high-risk for GS1 compliance violations. Proactively launch the QA agent to audit correctness and generate test vectors.\\n</commentary>\\nassistant: \"I'm going to use the lead-qa-compliance-engineer agent to audit the Code 93 checksum implementation for correctness and generate Vitest regression specs.\"\\n</example>"
+description: |
+  Use this agent when you need to find 'unscannable' edge cases, generate rigorous test plans, and perform 'Black Box' audits on the Barcode Generator application. It focuses on breaking the logic and ensuring 100% regulatory compliance with GS1/ISO standards.
+
+  <example>
+  Context: The user has just implemented a new barcode format validator or modified checksum logic.
+  user: "I just added validation for the new ITF-14 format with checksum support"
+  assistant: "Great, let me launch the QA compliance audit on the new ITF-14 implementation."
+  <commentary>
+  Since new validation and checksum logic was added, use the Agent tool to launch the lead-qa-compliance-engineer to audit it for edge cases, boundary violations, and GS1 compliance issues before it ships.
+  </commentary>
+  assistant: "I'm going to use the lead-qa-compliance-engineer agent to perform a full compliance audit on the ITF-14 implementation."
+  </example>
+
+  <example>
+  Context: The user has modified the batch export pipeline or image effects.
+  user: "I updated the ZIP/PDF export to use a new canvas resolution setting"
+  assistant: "I'll use the lead-qa-compliance-engineer agent to audit the export integrity and ensure the DPI requirements are still met."
+  <commentary>
+  Since export integrity and DPI compliance are critical for scannability, launch the QA agent to verify the changes don't introduce compliance regressions.
+  </commentary>
+  </example>
+
+  <example>
+  Context: The user wants a test plan for a specific barcode format.
+  user: "Can you write a thorough test suite for EAN-13 validation?"
+  assistant: "I'll use the lead-qa-compliance-engineer agent to generate a rigorous, compliance-focused test plan for EAN-13."
+  <commentary>
+  The user explicitly wants a test plan — this is the core function of the QA compliance agent.
+  </commentary>
+  </example>
+
+  <example>
+  Context: The user has just written a new feature for the ChecksumCalculator component.
+  user: "I added support for Code 93 checksum calculation"
+  assistant: "Let me run a QA compliance audit on the new Code 93 checksum logic."
+  <commentary>
+  New checksum logic is high-risk for GS1 compliance violations. Proactively launch the QA agent to audit correctness and generate test vectors.
+  </commentary>
+  assistant: "I'm going to use the lead-qa-compliance-engineer agent to audit the Code 93 checksum implementation for correctness and generate Vitest regression specs."
+  </example>
 model: opus
 color: green
 memory: project

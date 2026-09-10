@@ -1,6 +1,34 @@
 ---
 name: senior-code-reviewer
-description: "Use this agent when you need granular, line-by-line code reviews focused on idiomatic TypeScript, React best practices, logic edge cases, and maintainability. Ideal for reviewing recently written code, PRs, and refactors in the barcode generator app.\\n\\n<example>\\nContext: The user has just implemented a new batch export feature and wants a code review.\\nuser: \"I just finished implementing the batch PDF export feature in BatchGenerator.tsx. Can you review it?\"\\nassistant: \"I'll launch the senior-code-reviewer agent to do a thorough line-by-line review of your new batch PDF export code.\"\\n<commentary>\\nThe user has written new code and wants a review. Use the senior-code-reviewer agent to perform a detailed review of the recently changed files.\\n</commentary>\\n</example>\\n\\n<example>\\nContext: The user refactored the BarcodePreview component and wants to make sure it's clean before committing.\\nuser: \"I refactored BarcodePreview.tsx to use a discriminated union for render state. Looks good to me but can you double-check?\"\\nassistant: \"Let me use the senior-code-reviewer agent to do a line-by-line review of your BarcodePreview.tsx refactor.\"\\n<commentary>\\nA refactor was completed and the user wants a peer review. Proactively launch the senior-code-reviewer agent to review the changed file.\\n</commentary>\\n</example>\\n\\n<example>\\nContext: The user added a new checksum algorithm and wants to ensure it handles edge cases.\\nuser: \"Added a new Luhn checksum function to barcodeUtils.ts\"\\nassistant: \"Great — I'll use the senior-code-reviewer agent to review the new Luhn checksum implementation for edge cases and TypeScript idioms.\"\\n<commentary>\\nNew logic was added to a core lib file. The senior-code-reviewer agent should be invoked to catch potential bugs and verify correctness.\\n</commentary>\\n</example>"
+description: |
+  Use this agent when you need granular, line-by-line code reviews focused on idiomatic TypeScript, React best practices, logic edge cases, and maintainability. Ideal for reviewing recently written code, PRs, and refactors in the barcode generator app.
+
+  <example>
+  Context: The user has just implemented a new batch export feature and wants a code review.
+  user: "I just finished implementing the batch PDF export feature in BatchGenerator.tsx. Can you review it?"
+  assistant: "I'll launch the senior-code-reviewer agent to do a thorough line-by-line review of your new batch PDF export code."
+  <commentary>
+  The user has written new code and wants a review. Use the senior-code-reviewer agent to perform a detailed review of the recently changed files.
+  </commentary>
+  </example>
+
+  <example>
+  Context: The user refactored the BarcodePreview component and wants to make sure it's clean before committing.
+  user: "I refactored BarcodePreview.tsx to use a discriminated union for render state. Looks good to me but can you double-check?"
+  assistant: "Let me use the senior-code-reviewer agent to do a line-by-line review of your BarcodePreview.tsx refactor."
+  <commentary>
+  A refactor was completed and the user wants a peer review. Proactively launch the senior-code-reviewer agent to review the changed file.
+  </commentary>
+  </example>
+
+  <example>
+  Context: The user added a new checksum algorithm and wants to ensure it handles edge cases.
+  user: "Added a new Luhn checksum function to barcodeUtils.ts"
+  assistant: "Great — I'll use the senior-code-reviewer agent to review the new Luhn checksum implementation for edge cases and TypeScript idioms."
+  <commentary>
+  New logic was added to a core lib file. The senior-code-reviewer agent should be invoked to catch potential bugs and verify correctness.
+  </commentary>
+  </example>
 model: sonnet
 color: blue
 memory: project

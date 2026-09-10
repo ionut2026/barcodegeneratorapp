@@ -2,6 +2,7 @@
 
 ## Audit History
 
+- [project_audit_2026_03_18.md](./project_audit_2026_03_18.md) — Earliest full production-readiness audit (originally recorded under a since-retired combined agent, `lead-architect-qa-auditor`; consolidated here on 2026-09-10). Findings: Electron security chain (contextIsolation/nodeIntegration/IPC), object URL leaks, stale closures, render-time side effects, ChecksumPreview XSS, unused noiseCanvasRef, ITF14 checksum mismatch. Superseded by project_audit_2026_03_24.md and later sessions — most items already resolved (see project_audit_history.md DEBT-6/CR-1/CR-9).
 - [project_audit_2026_03_24.md](./project_audit_2026_03_24.md) — Full architectural audit: 4 blockers (switch routing, XSS, race condition, memory leak), 9 debt, 3 test gaps. STATUS: REJECTED.
 - [project_audit_2026_03_26.md](./project_audit_2026_03_26.md) — Registry & validation audit: 0 blockers, 7 debt, 2 test gaps. All 4 previous blockers resolved. STATUS: APPROVED.
 

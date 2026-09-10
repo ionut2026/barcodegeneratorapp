@@ -1,6 +1,34 @@
 ---
 name: lead-architect-auditor
-description: "Use this agent when performing high-stakes architectural reviews, structural audits, or production-readiness checks on the barcode generator codebase. This agent is appropriate after implementing new barcode formats, modifying core utilities like barcodeUtils.ts, adding batch processing logic, or before merging significant feature branches.\\n\\n<example>\\nContext: The user has just implemented a new GS1-128 barcode format with checksum logic and a new registry entry.\\nuser: \"I've added GS1-128 support with checksum calculation and updated the format registry. Can you review the implementation?\"\\nassistant: \"I'll invoke the lead-architect-auditor agent to perform a full architectural audit of your GS1-128 implementation.\"\\n<commentary>\\nA new barcode format with checksum logic and registry changes is exactly the kind of high-stakes structural change that warrants a full architectural audit. Launch the lead-architect-auditor agent.\\n</commentary>\\n</example>\\n\\n<example>\\nContext: The user has modified barcodeUtils.ts to add a new validation function and updated BarcodePreview.tsx.\\nuser: \"Updated the validation pipeline in barcodeUtils and tweaked the preview rendering. Ready to merge.\"\\nassistant: \"Before merging, let me run the lead-architect-auditor agent to audit the changes for architectural integrity and downstream impacts.\"\\n<commentary>\\nModifications to core utility files like barcodeUtils.ts affect multiple downstream components. Use the lead-architect-auditor agent to catch blockers before they reach production.\\n</commentary>\\n</example>\\n\\n<example>\\nContext: The user has added batch export functionality using jszip and jspdf.\\nuser: \"I finished the batch PDF export with progress tracking. It works in my testing.\"\\nassistant: \"I'll use the lead-architect-auditor agent to audit the batch export implementation for race conditions, memory leaks, and compliance with the registry pattern.\"\\n<commentary>\\nAsync batch processing is a known risk area for race conditions and memory issues. The lead-architect-auditor agent specializes in catching these architectural flaws.\\n</commentary>\\n</example>"
+description: |
+  Use this agent when performing high-stakes architectural reviews, structural audits, or production-readiness checks on the barcode generator codebase. This agent is appropriate after implementing new barcode formats, modifying core utilities like barcodeUtils.ts, adding batch processing logic, or before merging significant feature branches.
+
+  <example>
+  Context: The user has just implemented a new GS1-128 barcode format with checksum logic and a new registry entry.
+  user: "I've added GS1-128 support with checksum calculation and updated the format registry. Can you review the implementation?"
+  assistant: "I'll invoke the lead-architect-auditor agent to perform a full architectural audit of your GS1-128 implementation."
+  <commentary>
+  A new barcode format with checksum logic and registry changes is exactly the kind of high-stakes structural change that warrants a full architectural audit. Launch the lead-architect-auditor agent.
+  </commentary>
+  </example>
+
+  <example>
+  Context: The user has modified barcodeUtils.ts to add a new validation function and updated BarcodePreview.tsx.
+  user: "Updated the validation pipeline in barcodeUtils and tweaked the preview rendering. Ready to merge."
+  assistant: "Before merging, let me run the lead-architect-auditor agent to audit the changes for architectural integrity and downstream impacts."
+  <commentary>
+  Modifications to core utility files like barcodeUtils.ts affect multiple downstream components. Use the lead-architect-auditor agent to catch blockers before they reach production.
+  </commentary>
+  </example>
+
+  <example>
+  Context: The user has added batch export functionality using jszip and jspdf.
+  user: "I finished the batch PDF export with progress tracking. It works in my testing."
+  assistant: "I'll use the lead-architect-auditor agent to audit the batch export implementation for race conditions, memory leaks, and compliance with the registry pattern."
+  <commentary>
+  Async batch processing is a known risk area for race conditions and memory issues. The lead-architect-auditor agent specializes in catching these architectural flaws.
+  </commentary>
+  </example>
 model: opus
 color: red
 memory: project

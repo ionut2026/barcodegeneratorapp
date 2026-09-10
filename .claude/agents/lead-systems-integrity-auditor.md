@@ -1,6 +1,34 @@
 ---
 name: lead-systems-integrity-auditor
-description: "Use this agent when a deep, multi-layer audit of the barcode validation pipeline is required — particularly after changes to checksum logic, normalization functions, ZXing scanning configuration, or GS1/ISO compliance boundaries. Also use when debugging mysterious scan failures, investigating false-positive validations, or verifying that recent code changes haven't introduced subtle mathematical or regulatory regressions.\\n\\n<example>\\nContext: The developer has just modified the checksum weighting logic in barcodeUtils.ts for EAN13 and wants to ensure correctness.\\nuser: \"I just updated the EAN13 checksum calculation to use a different loop structure. Can you verify it's still correct?\"\\nassistant: \"I'll launch the Lead Systems Integrity Auditor to perform a full mathematical audit of the checksum logic.\"\\n<commentary>\\nA checksum function was modified in a core lib file. Use the Agent tool to launch the lead-systems-integrity-auditor to verify mathematical correctness, registry integrity, and normalization behavior.\\n</commentary>\\n</example>\\n\\n<example>\\nContext: A batch of barcodes that previously scanned correctly are now failing ZXing round-trip validation after a rendering pipeline change.\\nuser: \"Since we updated BarcodePreview.tsx, some QR codes are failing the scan verification step. Not sure why.\"\\nassistant: \"I'll invoke the Lead Systems Integrity Auditor to perform a scanning simulation audit across the ZXing layer and rendering pipeline.\"\\n<commentary>\\nA rendering change has caused scan failures. Use the Agent tool to launch the lead-systems-integrity-auditor to audit ZXing configuration, bit-perfect delta logic, and hidden character handling.\\n</commentary>\\n</example>\\n\\n<example>\\nContext: The developer is implementing a new barcode format and wants to ensure it meets GS1/ISO physical compliance thresholds before shipping.\\nuser: \"I've added PDF417 support with a minimum module width of 0.15mm. Is that within spec?\"\\nassistant: \"Let me use the Lead Systems Integrity Auditor to evaluate this against the 0.1905mm hard-line threshold and ISO/IEC 15415 requirements.\"\\n<commentary>\\nA new format is being introduced with a physical specification that may violate GS1/ISO compliance thresholds. Use the Agent tool to launch the lead-systems-integrity-auditor to audit regulatory compliance.\\n</commentary>\\n</example>"
+description: |
+  Use this agent when a deep, multi-layer audit of the barcode validation pipeline is required — particularly after changes to checksum logic, normalization functions, ZXing scanning configuration, or GS1/ISO compliance boundaries. Also use when debugging mysterious scan failures, investigating false-positive validations, or verifying that recent code changes haven't introduced subtle mathematical or regulatory regressions.
+
+  <example>
+  Context: The developer has just modified the checksum weighting logic in barcodeUtils.ts for EAN13 and wants to ensure correctness.
+  user: "I just updated the EAN13 checksum calculation to use a different loop structure. Can you verify it's still correct?"
+  assistant: "I'll launch the Lead Systems Integrity Auditor to perform a full mathematical audit of the checksum logic."
+  <commentary>
+  A checksum function was modified in a core lib file. Use the Agent tool to launch the lead-systems-integrity-auditor to verify mathematical correctness, registry integrity, and normalization behavior.
+  </commentary>
+  </example>
+
+  <example>
+  Context: A batch of barcodes that previously scanned correctly are now failing ZXing round-trip validation after a rendering pipeline change.
+  user: "Since we updated BarcodePreview.tsx, some QR codes are failing the scan verification step. Not sure why."
+  assistant: "I'll invoke the Lead Systems Integrity Auditor to perform a scanning simulation audit across the ZXing layer and rendering pipeline."
+  <commentary>
+  A rendering change has caused scan failures. Use the Agent tool to launch the lead-systems-integrity-auditor to audit ZXing configuration, bit-perfect delta logic, and hidden character handling.
+  </commentary>
+  </example>
+
+  <example>
+  Context: The developer is implementing a new barcode format and wants to ensure it meets GS1/ISO physical compliance thresholds before shipping.
+  user: "I've added PDF417 support with a minimum module width of 0.15mm. Is that within spec?"
+  assistant: "Let me use the Lead Systems Integrity Auditor to evaluate this against the 0.1905mm hard-line threshold and ISO/IEC 15415 requirements."
+  <commentary>
+  A new format is being introduced with a physical specification that may violate GS1/ISO compliance thresholds. Use the Agent tool to launch the lead-systems-integrity-auditor to audit regulatory compliance.
+  </commentary>
+  </example>
 model: opus
 color: yellow
 memory: project
