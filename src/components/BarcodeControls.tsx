@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { BarcodeConfig, BarcodeFormat, BARCODE_FORMATS, BASE_DPI, ChecksumType, getApplicableChecksums, getDefaultConfig, QualityLevel, snapToPixelGrid } from '@/lib/barcodeUtils';
+import { BarcodeConfig, BarcodeFormat, BARCODE_FORMATS, BASE_DPI, ChecksumType, getApplicableChecksums, getDefaultConfig, QualityLevel, snapToPixelGrid, DATAMATRIX_RECTANGULAR_VERSIONS } from '@/lib/barcodeUtils';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Slider } from '@/components/ui/slider';
@@ -136,6 +136,67 @@ export function BarcodeControls({ config, onChange, isValid, errorMessage }: Bar
           </SelectContent>
         </Select>
       </div>
+
+      {/* DataMatrix: long & narrow (DMRE) rectangular symbol */}
+      {config.format === 'datamatrix' && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between p-4 bg-secondary/50 rounded-xl border border-border/30">
+            <div className="flex flex-col pr-4">
+              <Label htmlFor="datamatrix-rectangular" className="text-sm font-medium cursor-pointer">
+                Long Barcode
+              </Label>
+            </div>
+            <Switch
+              id="datamatrix-rectangular"
+              checked={config.dataMatrixRectangular ?? false}
+              onCheckedChange={(checked) => onChange({ ...config, dataMatrixRectangular: checked })}
+            />
+          </div>
+          {config.dataMatrixRectangular && (
+            <div className="flex items-center justify-between p-4 bg-secondary/50 rounded-xl border border-border/30">
+              <div className="flex flex-col pr-4">
+                <Label htmlFor="datamatrix-version" className="text-sm font-medium cursor-pointer">
+                  Size
+                </Label>
+              </div>
+              <Select
+                value={config.dataMatrixVersion ?? 'auto'}
+                onValueChange={(v) => onChange({ ...config, dataMatrixVersion: v })}
+              >
+                <SelectTrigger id="datamatrix-version" className="w-40 h-10 rounded-xl bg-background/50">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {DATAMATRIX_RECTANGULAR_VERSIONS.map((v) => (
+                    <SelectItem key={v.value} value={v.value}>{v.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+          {config.format === 'datamatrix' && (
+            <div className="p-4 bg-secondary/50 rounded-xl border border-border/30 space-y-3">
+              <div className="flex justify-between text-sm">
+                <Label htmlFor="datamatrix-min-height" className="text-sm font-medium">
+                  Minimum Height
+                </Label>
+                <span className="font-mono text-primary font-medium">
+                  {(config.dataMatrixMinHeightMm ?? 5).toFixed(1)} mm
+                </span>
+              </div>
+              <Slider
+                id="datamatrix-min-height"
+                value={[config.dataMatrixMinHeightMm ?? 5]}
+                onValueChange={([value]) => onChange({ ...config, dataMatrixMinHeightMm: value })}
+                min={5}
+                max={20}
+                step={0.5}
+                className="w-full"
+              />
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Checksum */}
       {applicableChecksums.length > 1 && (

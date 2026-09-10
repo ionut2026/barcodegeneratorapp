@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { BarcodeFormat, BARCODE_FORMATS, ChecksumType, getApplicableChecksums, applyChecksum, snapToPixelGrid, getDefaultConfig, validateInput, getDisplayValue, getFixedLength, isNumericOnlyFormat, BASE_DPI } from '@/lib/barcodeUtils';
+import { BarcodeFormat, BARCODE_FORMATS, ChecksumType, getApplicableChecksums, applyChecksum, snapToPixelGrid, getDefaultConfig, validateInput, getDisplayValue, getFixedLength, isNumericOnlyFormat, BASE_DPI, DATAMATRIX_RECTANGULAR_VERSIONS } from '@/lib/barcodeUtils';
 import { generateBarcodeImage, generateBarcodeBlob, BarcodeImageResult } from '@/lib/barcodeImageGenerator';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -22,6 +22,12 @@ interface CommittedBatch {
   checksumLabel: string;
   values: string[];
   images: BarcodeImageResult[];
+  /** DataMatrix only: this batch was committed with the long/narrow DMRE option. */
+  dataMatrixRectangular: boolean;
+  /** DataMatrix (square and rectangular): minimum physical symbol height in mm for this batch. */
+  dataMatrixMinHeightMm: number;
+  /** DataMatrix long & narrow (DMRE) only: fixed size (e.g. '16x48') or 'auto' for this batch. */
+  dataMatrixVersion: string;
 }
 
 export interface BatchActions {
@@ -33,6 +39,8 @@ export interface BatchActions {
   previewScale: number;
   /** Whether the human-readable value is shown beneath each Batch Preview barcode. */
   showBarcodeValue: boolean;
+  /** Batch output DPI — used by the preview to report each barcode's physical print size. */
+  dpi: number;
 }
 
 interface BatchGeneratorProps {
@@ -154,6 +162,11 @@ export function BatchGenerator({ onImagesGenerated, onActionsReady }: BatchGener
   // Current config (working area)
   const [format, setFormat] = useState<BarcodeFormat>('CODE39');
   const [checksumType, setChecksumType] = useState<ChecksumType>('none');
+  // DataMatrix only: render long & narrow rectangular (DMRE) symbols so batches
+  // can encode payloads beyond the 42-char standard-rectangle ceiling.
+  const [dataMatrixRectangular, setDataMatrixRectangular] = useState(false);
+  const [dataMatrixMinHeightMm, setDataMatrixMinHeightMm] = useState(5);
+  const [dataMatrixVersion, setDataMatrixVersion] = useState('auto');
   const [values, setValues] = useState('');
   // Count / String Length inputs are kept as strings so they can be empty while
   // the user is editing (previous numeric state with `|| 1` / `|| 8` fallback
@@ -301,7 +314,7 @@ export function BatchGenerator({ onImagesGenerated, onActionsReady }: BatchGener
               chunk.map(async (val) => {
                 if (!validateInput(val, batch.format, batch.checksumType).valid) return null;
                 const processedVal = applyChecksum(val, batch.format, batch.checksumType);
-                const result = await generateBarcodeImage(processedVal, batch.format, scale, margin, widthMils, dpi, height);
+                const result = await generateBarcodeImage(processedVal, batch.format, scale, margin, widthMils, dpi, height, { dataMatrixRectangular, dataMatrixMinHeightMm, dataMatrixVersion });
                 if (!result) return null;
                 // Override the result's `value` with the full display-form so
                 // batch previews/PDF labels match what JsBarcode actually
@@ -318,7 +331,7 @@ export function BatchGenerator({ onImagesGenerated, onActionsReady }: BatchGener
             if (!cancelled) setProgress((processedCount / totalItems) * 100);
             await yieldToBrowser();
           }
-          updatedById.set(batch.id, { ...batch, images });
+          updatedById.set(batch.id, { ...batch, images, dataMatrixRectangular, dataMatrixMinHeightMm, dataMatrixVersion });
         }
 
         if (cancelled) return;
@@ -339,7 +352,7 @@ export function BatchGenerator({ onImagesGenerated, onActionsReady }: BatchGener
       setIsGenerating(false);
       setProgress(0);
     };
-  }, [scale, widthMils, dpi, height, margin]);
+  }, [scale, widthMils, dpi, height, margin, dataMatrixRectangular, dataMatrixMinHeightMm, dataMatrixVersion]);
 
   const generateRandomValues = () => {
     const vals = generateRandomForFormat(format, count, stringLength);
@@ -366,7 +379,7 @@ export function BatchGenerator({ onImagesGenerated, onActionsReady }: BatchGener
         // depend on checksumType, which generateBarcodeImage doesn't know about).
         if (!validateInput(val, format, checksumType).valid) continue;
         const processed = applyChecksum(val, format, checksumType);
-        const result = await generateBarcodeImage(processed, format, scale, margin, widthMils, dpi, height);
+        const result = await generateBarcodeImage(processed, format, scale, margin, widthMils, dpi, height, { dataMatrixRectangular, dataMatrixMinHeightMm, dataMatrixVersion });
         if (result) {
           images.push({
             ...result,
@@ -392,6 +405,9 @@ export function BatchGenerator({ onImagesGenerated, onActionsReady }: BatchGener
         id: crypto.randomUUID(),
         format,
         checksumType,
+        dataMatrixRectangular,
+        dataMatrixMinHeightMm,
+        dataMatrixVersion,
         formatLabel: fmtLabel,
         checksumLabel: chkLabel,
         values: valueList,
@@ -468,7 +484,7 @@ export function BatchGenerator({ onImagesGenerated, onActionsReady }: BatchGener
           // the crispness of an SVG render. 2D barcodes use the same scale
           // path — bwip-js renders modules pixel-perfectly so higher scale
           // simply means more pixels per module (no anti-aliasing introduced).
-          const blob = await generateBarcodeBlob(processedVal, batch.format, exportScale, 0, widthMils, dpi, height);
+          const blob = await generateBarcodeBlob(processedVal, batch.format, exportScale, 0, widthMils, dpi, height, { dataMatrixRectangular: batch.dataMatrixRectangular, dataMatrixMinHeightMm: batch.dataMatrixMinHeightMm, dataMatrixVersion: batch.dataMatrixVersion });
           if (blob) folder.file(`${fileName}.png`, blob);
           processed++;
           setProgress((processed / totalItems) * 100);
@@ -514,7 +530,7 @@ export function BatchGenerator({ onImagesGenerated, onActionsReady }: BatchGener
         for (const val of batch.values) {
           if (!validateInput(val, batch.format, batch.checksumType).valid) continue;
           const processedVal = applyChecksum(val, batch.format, batch.checksumType);
-          const result = await generateBarcodeImage(processedVal, batch.format, scale, 0, widthMils, dpi, height);
+          const result = await generateBarcodeImage(processedVal, batch.format, scale, 0, widthMils, dpi, height, { dataMatrixRectangular: batch.dataMatrixRectangular, dataMatrixMinHeightMm: batch.dataMatrixMinHeightMm, dataMatrixVersion: batch.dataMatrixVersion });
           if (result) {
             const fullValue = getDisplayValue(val, batch.format, batch.checksumType);
             pdfImages.push({ ...result, value: fullValue, label });
@@ -576,8 +592,8 @@ export function BatchGenerator({ onImagesGenerated, onActionsReady }: BatchGener
   const isDisabled = isGenerating || batches.length === 0;
 
   useEffect(() => {
-    onActionsReady?.({ downloadAsZip, exportAsPDF, isDisabled, isGenerating, previewScale: scale, showBarcodeValue });
-  }, [downloadAsZip, exportAsPDF, isDisabled, isGenerating, scale, showBarcodeValue]);
+    onActionsReady?.({ downloadAsZip, exportAsPDF, isDisabled, isGenerating, previewScale: scale, showBarcodeValue, dpi });
+  }, [downloadAsZip, exportAsPDF, isDisabled, isGenerating, scale, showBarcodeValue, dpi]);
 
   const totalImages = batches.reduce((sum, b) => sum + b.images.length, 0);
 
@@ -603,6 +619,62 @@ export function BatchGenerator({ onImagesGenerated, onActionsReady }: BatchGener
             ))}
           </SelectContent>
         </Select>
+
+        {/* DataMatrix: long & narrow (DMRE) rectangular symbol */}
+        {format === 'datamatrix' && (
+          <div className="space-y-2">
+            <div className="flex items-center justify-between p-3 bg-secondary/50 rounded-xl border border-border/30">
+              <div className="flex flex-col pr-4">
+                <Label htmlFor="batch-datamatrix-rectangular" className="text-sm font-medium cursor-pointer">
+                  Long Barcode
+                </Label>
+              </div>
+              <Switch
+                id="batch-datamatrix-rectangular"
+                checked={dataMatrixRectangular}
+                onCheckedChange={setDataMatrixRectangular}
+              />
+            </div>
+            {dataMatrixRectangular && (
+              <div className="flex items-center justify-between p-3 bg-secondary/50 rounded-xl border border-border/30">
+                <div className="flex flex-col pr-4">
+                  <Label htmlFor="batch-datamatrix-version" className="text-sm font-medium cursor-pointer">
+                    Size
+                  </Label>
+                </div>
+                <Select value={dataMatrixVersion} onValueChange={setDataMatrixVersion}>
+                  <SelectTrigger id="batch-datamatrix-version" className="w-36 h-9">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {DATAMATRIX_RECTANGULAR_VERSIONS.map((v) => (
+                      <SelectItem key={v.value} value={v.value}>{v.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+            <div className="p-3 bg-secondary/50 rounded-xl border border-border/30 space-y-3">
+              <div className="flex justify-between text-sm">
+                <Label htmlFor="batch-datamatrix-min-height" className="text-sm font-medium">
+                  Minimum Height
+                </Label>
+                <span className="font-mono text-primary font-medium">
+                  {dataMatrixMinHeightMm.toFixed(1)} mm
+                </span>
+              </div>
+              <Slider
+                id="batch-datamatrix-min-height"
+                value={[dataMatrixMinHeightMm]}
+                onValueChange={([value]) => setDataMatrixMinHeightMm(value)}
+                min={5}
+                max={20}
+                step={0.5}
+                className="w-full"
+              />
+            </div>
+          </div>
+        )}
 
         {/* Checksum */}
         {applicableChecksums.length > 1 && (

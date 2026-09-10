@@ -1,8 +1,8 @@
 import { useMemo, useState, useEffect, useRef } from 'react';
 import JsBarcode from 'jsbarcode';
 import bwipjs from 'bwip-js';
-import { BarcodeConfig, normalizeForRendering, snapToPixelGrid, physicalPxScale, clampBwipTextsize, getJsBarcodeFormat } from '@/lib/barcodeUtils';
-import { injectPngDpi, appendValueLabelToCanvas } from '@/lib/barcodeImageGenerator';
+import { BarcodeConfig, normalizeForRendering, snapToPixelGrid, physicalPxScale, clampBwipTextsize, getJsBarcodeFormat, getDataMatrixShapeOptions } from '@/lib/barcodeUtils';
+import { injectPngDpi, appendValueLabelToCanvas, computeDataMatrixModuleScale } from '@/lib/barcodeImageGenerator';
 import { ImageEffectsConfig, getDefaultEffectsConfig } from '@/components/ImageEffects';
 import { AlertCircle, ShieldCheck, FileJson, Loader2 } from 'lucide-react';
 import { useCertification } from '@/hooks/useCertification';
@@ -40,6 +40,19 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
 
   // Calculate pixel snapping for bar width
   const snap = useMemo(() => snapToPixelGrid(config.widthMils, config.dpi), [config.widthMils, config.dpi]);
+
+  // Physical size of the rendered 2D symbol (DataMatrix/QR/etc.). Read from the
+  // pure-symbol canvas (barcodeCanvasRef holds the bwip render WITHOUT the HRI
+  // text label, which is drawn onto a separate canvas), so the mm reflects the
+  // actual symbol — including the DataMatrix Minimum-Height boost and forced
+  // version. Same formula the batch preview and PNG download use: px×25.4/dpi.
+  const [symbol2DPx, setSymbol2DPx] = useState<{ w: number; h: number } | null>(null);
+  useEffect(() => {
+    const c = barcodeCanvasRef.current;
+    if (is2D && c && c.width > 0 && c.height > 0) {
+      setSymbol2DPx({ w: c.width, h: c.height });
+    }
+  }, [barcodeDataUrl, is2D, barcodeCanvasRef]);
 
   // -------------------------------------------------------------------------
   // Effects-baked preview
@@ -260,10 +273,18 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
         // 2D barcode: render via bwip-js to canvas
         const dpiScale = physicalPxScale(config.dpi);
         const tempCanvas = document.createElement('canvas');
+        const baseModule = config.format === 'datamatrix'
+          ? computeDataMatrixModuleScale(barcodeText, modulePixels, {
+              rectangular: config.dataMatrixRectangular,
+              version: config.dataMatrixVersion,
+              minHeightMm: config.dataMatrixMinHeightMm,
+              dpi: config.dpi,
+            })
+          : modulePixels;
         const bwipOptions: Record<string, unknown> = {
           bcid: config.format,
           text: barcodeText,
-          scale: modulePixels,
+          scale: baseModule,
           includetext: imgDisplayValue,
           textsize: clampBwipTextsize(config.fontSize * dpiScale),
           textxalign: 'center',
@@ -275,6 +296,7 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
           bwipOptions.height = Math.floor((config.height * dpiScale) / 10);
           bwipOptions.width = Math.floor((config.height * dpiScale) / 3);
         }
+        Object.assign(bwipOptions, getDataMatrixShapeOptions(config));
         bwipjs.toCanvas(tempCanvas, bwipOptions as unknown as Parameters<typeof bwipjs.toCanvas>[1]);
         // Append HRI text below the 2D bitmap when displayValue is on
         // (bwip-js ignores includetext for QR/Datamatrix/Aztec/PDF417).
@@ -500,6 +522,14 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
               </span>
             </div>
           </div>
+          {is2D && symbol2DPx && (
+            <div className="mt-3 pt-3 border-t border-border/40">
+              <span className="text-muted-foreground block text-xs font-semibold mb-1">Symbol Size (W × H)</span>
+              <span className="font-mono text-primary">
+                {(symbol2DPx.w * 25.4 / config.dpi).toFixed(1)} × {(symbol2DPx.h * 25.4 / config.dpi).toFixed(1)} mm
+              </span>
+            </div>
+          )}
         </div>
       )}
 

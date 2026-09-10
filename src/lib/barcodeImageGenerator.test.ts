@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { injectPngDpi, generateBarcodeSVGString, generateBarcodeSVGBlob, appendValueLabelToCanvas } from './barcodeImageGenerator';
+import { injectPngDpi, generateBarcodeSVGString, generateBarcodeSVGBlob, appendValueLabelToCanvas, computeDataMatrixModuleScale } from './barcodeImageGenerator';
 
 // Minimal valid 1×1 white PNG (no pHYs) — 67 bytes.
 // Generated from a known-good 1×1 PNG stripped of all optional chunks.
@@ -286,5 +286,21 @@ describe('appendValueLabelToCanvas', () => {
     const out2 = appendValueLabelToCanvas(src, 'ABCDEFGHIJKLMNOPQRSTUV', 16, 'monospace', '#fff', '#000');
     expect(out1.width).toBe(123);
     expect(out2.width).toBe(123);
+  });
+});
+
+describe('computeDataMatrixModuleScale — height boost is not gated by shape', () => {
+  // The min-height boost applies to BOTH square and rectangular (DMRE)
+  // DataMatrix. A square symbol scaled to a fixed height stays a compact,
+  // constant footprint for any character count — the shape a curved sample
+  // tube needs — so the boost must NOT require `rectangular: true`.
+  it('returns baseModulePx unchanged when no min-height is requested (square)', () => {
+    expect(computeDataMatrixModuleScale('12345678', 3, { rectangular: false, dpi: 600 })).toBe(3);
+    expect(computeDataMatrixModuleScale('12345678', 3, { rectangular: false, minHeightMm: 0, dpi: 600 })).toBe(3);
+  });
+
+  it('returns baseModulePx unchanged when no min-height is requested (rectangular)', () => {
+    expect(computeDataMatrixModuleScale('12345678', 4, { rectangular: true, dpi: 600 })).toBe(4);
+    expect(computeDataMatrixModuleScale('12345678', 4, { rectangular: true, minHeightMm: -1, dpi: 600 })).toBe(4);
   });
 });
