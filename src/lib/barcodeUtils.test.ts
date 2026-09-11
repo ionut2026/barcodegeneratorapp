@@ -26,6 +26,8 @@ import {
   getDefaultConfig,
   getDataMatrixShapeOptions,
   dataMatrixModuleScaleForHeight,
+  DMRE_VERSIONS_BY_SHAPE,
+  DATAMATRIX_RECTANGULAR_VERSIONS,
   getApplicableChecksums,
   calculateGS1Mod10,
   clampBwipTextsize,
@@ -588,6 +590,47 @@ describe('getDataMatrixShapeOptions', () => {
   it('ignores version when rectangular is off (square)', () => {
     expect(getDataMatrixShapeOptions({ format: 'datamatrix', dataMatrixRectangular: false, dataMatrixVersion: '16x48' }))
       .toEqual({});
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DMRE_VERSIONS_BY_SHAPE — stable auto-selection ordering
+// ---------------------------------------------------------------------------
+describe('DMRE_VERSIONS_BY_SHAPE', () => {
+  it('excludes the "auto" sentinel and covers every fixed size', () => {
+    const fixed = DATAMATRIX_RECTANGULAR_VERSIONS.filter((v) => v.value !== 'auto');
+    expect(DMRE_VERSIONS_BY_SHAPE).toHaveLength(fixed.length);
+    expect(DMRE_VERSIONS_BY_SHAPE.some((v) => v.value === 'auto')).toBe(false);
+    const values = DMRE_VERSIONS_BY_SHAPE.map((v) => v.value).sort();
+    expect(values).toEqual(fixed.map((v) => v.value).sort());
+  });
+
+  it('parses rows/cols correctly from each "RxC" value', () => {
+    for (const v of DMRE_VERSIONS_BY_SHAPE) {
+      expect(v.value).toBe(`${v.rows}x${v.cols}`);
+    }
+  });
+
+  it('is ordered by proximity to the target aspect (4:1), then ascending area', () => {
+    for (let i = 1; i < DMRE_VERSIONS_BY_SHAPE.length; i++) {
+      const prev = DMRE_VERSIONS_BY_SHAPE[i - 1];
+      const cur = DMRE_VERSIONS_BY_SHAPE[i];
+      const dPrev = Math.abs(prev.cols / prev.rows - 4);
+      const dCur = Math.abs(cur.cols / cur.rows - 4);
+      if (Math.abs(dPrev - dCur) < 1e-9) {
+        // Equal aspect distance → area must be non-decreasing.
+        expect(prev.rows * prev.cols).toBeLessThanOrEqual(cur.rows * cur.cols);
+      } else {
+        expect(dPrev).toBeLessThan(dCur);
+      }
+    }
+  });
+
+  it('puts a long-and-narrow ~4:1 size first (the recognisable Data Matrix shape)', () => {
+    // The first candidate must sit at the 4:1 target so auto stays a long
+    // rectangle rather than drifting square (1.5:1) or extremely wide (7:1).
+    const first = DMRE_VERSIONS_BY_SHAPE[0];
+    expect(first.cols / first.rows).toBe(4);
   });
 });
 

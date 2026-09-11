@@ -1,8 +1,7 @@
 import { useMemo, useState, useEffect, useRef } from 'react';
 import JsBarcode from 'jsbarcode';
-import bwipjs from 'bwip-js';
 import { BarcodeConfig, normalizeForRendering, snapToPixelGrid, physicalPxScale, clampBwipTextsize, getJsBarcodeFormat, getDataMatrixShapeOptions } from '@/lib/barcodeUtils';
-import { injectPngDpi, appendValueLabelToCanvas, computeDataMatrixModuleScale } from '@/lib/barcodeImageGenerator';
+import { injectPngDpi, appendValueLabelToCanvas, computeDataMatrixModuleScale, renderBwipToCanvas, resolveAutoDmreVersion } from '@/lib/barcodeImageGenerator';
 import { ImageEffectsConfig, getDefaultEffectsConfig } from '@/components/ImageEffects';
 import { AlertCircle, ShieldCheck, FileJson, Loader2 } from 'lucide-react';
 import { useCertification } from '@/hooks/useCertification';
@@ -33,6 +32,7 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
     barcodeText,
     modulePixels,
     qualityBlur,
+    symbol2DInsetPx,
     renderExportCanvas,
   } = useBarcodeRenderer(config, effects, isValid, errorMessage);
 
@@ -45,14 +45,20 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
   // pure-symbol canvas (barcodeCanvasRef holds the bwip render WITHOUT the HRI
   // text label, which is drawn onto a separate canvas), so the mm reflects the
   // actual symbol — including the DataMatrix Minimum-Height boost and forced
-  // version. Same formula the batch preview and PNG download use: px×25.4/dpi.
+  // version. The bwip canvas bakes in a quiet-zone margin (symbol2DInsetPx per
+  // side); subtract it so the reported size is the barcode modules themselves,
+  // excluding the surrounding white space. Same formula the batch preview and
+  // PNG download use: px×25.4/dpi.
   const [symbol2DPx, setSymbol2DPx] = useState<{ w: number; h: number } | null>(null);
   useEffect(() => {
     const c = barcodeCanvasRef.current;
     if (is2D && c && c.width > 0 && c.height > 0) {
-      setSymbol2DPx({ w: c.width, h: c.height });
+      setSymbol2DPx({
+        w: Math.max(1, c.width - 2 * symbol2DInsetPx),
+        h: Math.max(1, c.height - 2 * symbol2DInsetPx),
+      });
     }
-  }, [barcodeDataUrl, is2D, barcodeCanvasRef]);
+  }, [barcodeDataUrl, is2D, barcodeCanvasRef, symbol2DInsetPx]);
 
   // -------------------------------------------------------------------------
   // Effects-baked preview
@@ -273,10 +279,11 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
         // 2D barcode: render via bwip-js to canvas
         const dpiScale = physicalPxScale(config.dpi);
         const tempCanvas = document.createElement('canvas');
+        const effDmreVersion = resolveAutoDmreVersion(barcodeText, config);
         const baseModule = config.format === 'datamatrix'
           ? computeDataMatrixModuleScale(barcodeText, modulePixels, {
               rectangular: config.dataMatrixRectangular,
-              version: config.dataMatrixVersion,
+              version: effDmreVersion,
               minHeightMm: config.dataMatrixMinHeightMm,
               dpi: config.dpi,
             })
@@ -296,8 +303,8 @@ export function BarcodePreview({ config, effects = defaultEffects, isValid, erro
           bwipOptions.height = Math.floor((config.height * dpiScale) / 10);
           bwipOptions.width = Math.floor((config.height * dpiScale) / 3);
         }
-        Object.assign(bwipOptions, getDataMatrixShapeOptions(config));
-        bwipjs.toCanvas(tempCanvas, bwipOptions as unknown as Parameters<typeof bwipjs.toCanvas>[1]);
+        Object.assign(bwipOptions, getDataMatrixShapeOptions({ ...config, dataMatrixVersion: effDmreVersion }));
+        renderBwipToCanvas(tempCanvas, bwipOptions);
         // Append HRI text below the 2D bitmap when displayValue is on
         // (bwip-js ignores includetext for QR/Datamatrix/Aztec/PDF417).
         let printSource = tempCanvas;

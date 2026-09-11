@@ -188,7 +188,7 @@ export function BarcodeControls({ config, onChange, isValid, errorMessage }: Bar
                 id="datamatrix-min-height"
                 value={[config.dataMatrixMinHeightMm ?? 5]}
                 onValueChange={([value]) => onChange({ ...config, dataMatrixMinHeightMm: value })}
-                min={5}
+                min={3}
                 max={20}
                 step={0.5}
                 className="w-full"

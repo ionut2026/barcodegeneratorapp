@@ -667,7 +667,7 @@ export function BatchGenerator({ onImagesGenerated, onActionsReady }: BatchGener
                 id="batch-datamatrix-min-height"
                 value={[dataMatrixMinHeightMm]}
                 onValueChange={([value]) => setDataMatrixMinHeightMm(value)}
-                min={5}
+                min={3}
                 max={20}
                 step={0.5}
                 className="w-full"

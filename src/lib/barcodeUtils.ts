@@ -147,6 +147,40 @@ export const DATAMATRIX_RECTANGULAR_VERSIONS: { value: string; label: string }[]
 ];
 
 /**
+ * Target aspect ratio (cols ÷ rows) for stable DMRE `auto` selection. 4.0 is
+ * the aspect of the 16×64 symbol — the compact "long & narrow" rectangle users
+ * recognise as a normal Data Matrix. Auto selection prefers the fitting size
+ * whose aspect is closest to this, so the rendered shape stays a consistent
+ * long rectangle rather than drifting square (low aspect) or extremely wide
+ * (high aspect).
+ */
+export const TARGET_DMRE_ASPECT = 4;
+
+/**
+ * Standard DMRE sizes ordered for STABLE `auto` selection: by proximity to
+ * TARGET_DMRE_ASPECT (cols ÷ rows closest to a 16×64-style 4:1 long rectangle),
+ * then ascending area. Auto mode picks the FIRST entry that can encode the
+ * payload, which keeps a consistent long-and-narrow shape as the character
+ * count changes — after the min-height boost fixes the symbol height, the
+ * rendered width is proportional to cols ÷ rows, so holding the aspect near a
+ * fixed target holds the on-screen shape steady. Without this, bwip-js's own
+ * auto-fit minimises codewords and lurches between wildly different aspect
+ * ratios (e.g. a compact 16×64 at 91 chars but a very wide 12×88 at 92).
+ * Derived once from DATAMATRIX_RECTANGULAR_VERSIONS so the two lists can never
+ * drift apart.
+ */
+export const DMRE_VERSIONS_BY_SHAPE: { value: string; rows: number; cols: number }[] =
+  DATAMATRIX_RECTANGULAR_VERSIONS
+    .filter((v) => v.value !== 'auto')
+    .map((v) => {
+      const [rows, cols] = v.value.split('x').map(Number);
+      return { value: v.value, rows, cols };
+    })
+    .sort((a, b) =>
+      Math.abs((a.cols / a.rows) - TARGET_DMRE_ASPECT) - Math.abs((b.cols / b.rows) - TARGET_DMRE_ASPECT)
+      || (a.rows * a.cols) - (b.rows * b.cols));
+
+/**
  * Compute the module pixel size needed so a DataMatrix symbol with `rows`
  * module-rows is at least `minHeightMm` tall at `dpi`, never shrinking below
  * `baseModulePx`. Modules stay square (the returned size applies to both axes),

@@ -1,6 +1,6 @@
 import JsBarcode from 'jsbarcode';
 import bwipjs from 'bwip-js';
-import { BarcodeFormat, validateInput, normalizeForRendering, is2DBarcode, physicalPxScale, getJsBarcodeFormat, getDataMatrixShapeOptions, dataMatrixModuleScaleForHeight } from '@/lib/barcodeUtils';
+import { BarcodeFormat, validateInput, normalizeForRendering, is2DBarcode, physicalPxScale, getJsBarcodeFormat, getDataMatrixShapeOptions, dataMatrixModuleScaleForHeight, DMRE_VERSIONS_BY_SHAPE } from '@/lib/barcodeUtils';
 
 /**
  * Optional per-render tweaks shared by the headless generators. Currently
@@ -61,6 +61,106 @@ export function computeDataMatrixModuleScale(
   if (!opts.minHeightMm || opts.minHeightMm <= 0) return baseModulePx;
   const rows = measureDataMatrixRows(text, !!opts.rectangular, opts.version);
   return dataMatrixModuleScaleForHeight(rows, opts.minHeightMm, opts.dpi, baseModulePx);
+}
+
+/**
+ * Probe whether a fixed DMRE size (`version`, e.g. '26x40') can encode `text`.
+ * bwip-js throws `datamatrixNoValidSymbol` when the payload does not fit, so a
+ * clean render == fits. Returns false on any failure so callers can try the
+ * next candidate size.
+ */
+function dmreVersionFits(text: string, version: string): boolean {
+  const probe = document.createElement('canvas');
+  try {
+    bwipjs.toCanvas(probe, {
+      bcid: 'datamatrix',
+      text,
+      scale: 1,
+      padding: 0,
+      format: 'rectangle',
+      dmre: true,
+      version,
+    } as Parameters<typeof bwipjs.toCanvas>[1]);
+  } catch {
+    probe.width = 0;
+    probe.height = 0;
+    return false;
+  }
+  probe.width = 0;
+  probe.height = 0;
+  return true;
+}
+
+/**
+ * Resolve the effective DMRE `version` to force for a render.
+ *
+ * Non-rectangular / non-DataMatrix renders are returned unchanged — behaviour
+ * is identical to before.
+ *
+ * For rectangular DataMatrix the goal is a STABLE on-screen shape regardless of
+ * how many characters are pasted in:
+ *  - A fixed size the user chose is honoured **as long as the payload fits it**.
+ *  - For `auto`, or a fixed size the payload has outgrown, we pick the
+ *    least-wide standard size that fits (DMRE_VERSIONS_BY_SHAPE, ordered by
+ *    ascending aspect ratio then area) instead of deferring to bwip-js's native
+ *    auto-fit. bwip-js's auto-fit minimises codewords and so lurches between
+ *    wildly different aspect ratios as the character count changes (e.g. a
+ *    compact 16×64 at 91 chars but a very wide 12×88 at 92). Because the
+ *    min-height boost fixes the symbol height, choosing the least-wide fitting
+ *    size keeps the rendered width — and therefore the shape — stable.
+ *
+ * Returns 'auto' only when no standard rectangular size can hold the payload, so
+ * bwip-js's own auto-fit (and the NoValidSymbol fallback in renderBwipToCanvas)
+ * still applies for oversized payloads.
+ */
+export function resolveAutoDmreVersion(
+  text: string,
+  config: { format: BarcodeFormat; dataMatrixRectangular?: boolean; dataMatrixVersion?: string },
+): string | undefined {
+  if (config.format !== 'datamatrix' || !config.dataMatrixRectangular) return config.dataMatrixVersion;
+  if (!text) return config.dataMatrixVersion;
+  // Honour an explicit fixed size only while the payload actually fits it;
+  // otherwise fall through to the shape-stable search (never bwip's wide auto).
+  const fixed = config.dataMatrixVersion;
+  if (fixed && fixed !== 'auto' && dmreVersionFits(text, fixed)) return fixed;
+  for (const cand of DMRE_VERSIONS_BY_SHAPE) {
+    if (dmreVersionFits(text, cand.value)) return cand.value;
+  }
+  return 'auto';
+}
+
+/**
+ * Render a bwip-js barcode to a canvas, gracefully recovering from the one
+ * failure mode where a *fixed* DataMatrix DMRE size (`version`, e.g. '16x48')
+ * is too small for the payload — bwip-js throws
+ * `datamatrixNoValidSymbol#20439: Maximum length exceeded or invalid size`.
+ * In that case the fixed size is dropped and the render is retried with
+ * auto-fit (bwip-js picks the smallest DMRE rectangle that holds the data),
+ * so long payloads (90+ characters) still produce a valid symbol instead of a
+ * render error. Any other error — and any render that does not use a fixed
+ * `version` — is left untouched, so behaviour is identical for every case that
+ * already worked.
+ */
+export function renderBwipToCanvas(
+  canvas: HTMLCanvasElement,
+  bwipOptions: Record<string, unknown>,
+): void {
+  const toCanvas = bwipjs.toCanvas as (
+    c: HTMLCanvasElement,
+    o: Parameters<typeof bwipjs.toCanvas>[1],
+  ) => unknown;
+  try {
+    toCanvas(canvas, bwipOptions as Parameters<typeof bwipjs.toCanvas>[1]);
+  } catch (err) {
+    const isFixedDmre = bwipOptions.version != null && bwipOptions.version !== 'auto';
+    if (isFixedDmre && /datamatrixNoValidSymbol/.test(String(err))) {
+      const retry: Record<string, unknown> = { ...bwipOptions };
+      delete retry.version;
+      toCanvas(canvas, retry as Parameters<typeof bwipjs.toCanvas>[1]);
+      return;
+    }
+    throw err;
+  }
 }
 
 // ── PNG pHYs DPI injection ─────────────────────────────────────────────────────
@@ -269,12 +369,19 @@ function render2DToCanvas(
   options: BarcodeRenderOptions = {},
 ): { dataUrl: string; width: number; height: number } {
   const canvas = document.createElement('canvas');
+  // For DataMatrix DMRE `auto`, resolve a concrete, shape-stable size up front
+  // so both the height-boost probe and the render agree on the symbol chosen.
+  const effVersion = resolveAutoDmreVersion(value, {
+    format,
+    dataMatrixRectangular: options.dataMatrixRectangular,
+    dataMatrixVersion: options.dataMatrixVersion,
+  });
   // For DataMatrix DMRE, enlarge the base module (square) so the symbol meets
   // its minimum-height target; other formats/options leave modulePixels as-is.
   const baseModulePx = format === 'datamatrix'
     ? computeDataMatrixModuleScale(value, modulePixels, {
         rectangular: options.dataMatrixRectangular,
-        version: options.dataMatrixVersion,
+        version: effVersion,
         minHeightMm: options.dataMatrixMinHeightMm,
         dpi,
       })
@@ -298,8 +405,8 @@ function render2DToCanvas(
     barcolor: '000000',
     includetext: false,
   };
-  Object.assign(bwipOptions, getDataMatrixShapeOptions({ format, dataMatrixRectangular: options.dataMatrixRectangular, dataMatrixVersion: options.dataMatrixVersion }));
-  bwipjs.toCanvas(canvas, bwipOptions as Parameters<typeof bwipjs.toCanvas>[1]);
+  Object.assign(bwipOptions, getDataMatrixShapeOptions({ format, dataMatrixRectangular: options.dataMatrixRectangular, dataMatrixVersion: effVersion }));
+  renderBwipToCanvas(canvas, bwipOptions);
   const result = {
     dataUrl: canvas.toDataURL('image/png'),
     width: canvas.width,
